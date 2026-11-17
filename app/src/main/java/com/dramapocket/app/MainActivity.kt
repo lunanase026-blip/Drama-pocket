@@ -52,6 +52,7 @@ import org.json.JSONArray
 private const val CATALOG_URL = "https://reelfren.net/"
 private const val PREFS_NAME = "drama_pocket_prefs"
 private const val KEY_FAVORITES = "favorites"
+private const val KEY_CATALOG_CACHE = "catalog_cache_v1"
 
 data class Drama(
     val title: String,
@@ -59,6 +60,45 @@ data class Drama(
     val image: String,
     val description: String = ""
 )
+
+private fun readCachedCatalog(context: Context): List<Drama> {
+    val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(KEY_CATALOG_CACHE, null) ?: return emptyList()
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val title = item.optString("title").trim()
+                val url = item.optString("url").trim()
+                if (title.isNotBlank() && isReelFrenHost(url)) {
+                    add(Drama(
+                        title = title,
+                        url = url,
+                        image = item.optString("image").trim(),
+                        description = item.optString("description").trim()
+                    ))
+                }
+            }
+        }.distinctBy { it.url }
+    }.getOrDefault(emptyList())
+}
+
+private fun writeCachedCatalog(context: Context, dramas: List<Drama>) {
+    val array = JSONArray()
+    dramas.forEach { drama ->
+        array.put(org.json.JSONObject().apply {
+            put("title", drama.title)
+            put("url", drama.url)
+            put("image", drama.image)
+            put("description", drama.description)
+        })
+    }
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_CATALOG_CACHE, array.toString())
+        .apply()
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,8 +152,8 @@ private fun DramaPocketApp() {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    var dramas by remember { mutableStateOf<List<Drama>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var dramas by remember { mutableStateOf(readCachedCatalog(context)) }
+    var loading by remember { mutableStateOf(dramas.isEmpty()) }
     var needsVerification by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedDrama by remember { mutableStateOf<Drama?>(null) }
@@ -265,7 +305,7 @@ private fun DramaPocketApp() {
                             }
                             key(reloadKey) {
                                 CatalogWebLoader(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = if (dramas.isEmpty() || needsVerification) Modifier.fillMaxSize() else Modifier.size(1.dp),
                                     onVerificationRequired = {
                                         loading = false
                                         error = null
@@ -274,6 +314,7 @@ private fun DramaPocketApp() {
                                     onCatalogLoaded = { list ->
                                         CookieManager.getInstance().flush()
                                         dramas = list
+                                        writeCachedCatalog(context, list)
                                         loading = false
                                         needsVerification = false
                                         error = null
