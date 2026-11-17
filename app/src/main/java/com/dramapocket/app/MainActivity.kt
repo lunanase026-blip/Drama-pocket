@@ -1,7 +1,26 @@
 package com.dramapocket.app
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -25,23 +44,19 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -65,201 +80,397 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.ByteArrayInputStream
 
-private const val PREFS_NAME = "drama_pocket_vertical_v2"
+private const val CATALOG_URL = "https://reelfren.net/"
+private const val PREFS_NAME = "drama_pocket_reelfren_v3"
 private const val KEY_FAVORITES = "favorites"
-private const val KEY_CUSTOM_DRAMAS = "custom_dramas"
-private const val KEY_FEED_URL = "feed_url"
-private const val KEY_REMOTE_CATALOG = "remote_catalog"
-private const val KEY_PROGRESS_PREFIX = "ep_progress_"
+private const val KEY_CATALOG_CACHE = "catalog_cache_v3"
+private const val KEY_EP_PROGRESS_PREFIX = "ep_progress_"
 
-private val PROVIDERS = listOf(
+private val BASE_PROVIDERS = listOf(
     "All",
     "Melolo",
-    "Sereal+",
     "DramaBox",
     "ReelShort",
-    "DramaWave",
-    "NetShort",
     "ShortMax",
     "FlexTV",
-    "Vigloo",
-    "PineDrama",
-    "MoboReels",
-    "WeTV",
-    "iQIYI",
-    "FreeReels",
-    "MovieBox Shorts"
+    "NetShort",
+    "Vigloo"
 )
 
-data class DramaEpisode(
-    val number: Int,
-    val title: String,
-    val videoUrl: String
+private val BLOCKED_AD_DOMAINS = setOf(
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "adservice.google.com",
+    "popads.net",
+    "popcash.net",
+    "propellerads.com",
+    "propu.sh",
+    "monetag.com",
+    "alwingulla.com",
+    "highperformanceformat.com",
+    "topcreativeformat.com",
+    "profitabledisplaynetwork.com",
+    "effectivegatecpm.com",
+    "adsterra.com",
+    "adsterratools.com",
+    "hilltopads.net",
+    "clickadu.com",
+    "exoclick.com",
+    "realsrv.com",
+    "tsyndicate.com",
+    "juicyads.com",
+    "adsco.re",
+    "onclicka.com",
+    "onclckds.com",
+    "acscdn.com",
+    "adtng.com",
+    "trafficjunky.com",
+    "trafficstars.com",
+    "mgid.com",
+    "taboola.com",
+    "outbrain.com",
+    "criteo.com",
+    "pubmatic.com",
+    "rubiconproject.com",
+    "openx.net",
+    "adnxs.com",
+    "adsrvr.org",
+    "casalemedia.com",
+    "smartadserver.com",
+    "mc.yandex.ru",
+    "whos.amung.us",
+    "histats.com",
+    "statcounter.com",
+    "shopee.ph",
+    "shope.ee",
+    "shp.ee",
+    "lazada.com.ph",
+    "invol.co",
+    "invle.co",
+    "go.skimresources.com",
+    "awin1.com",
+    "admitad.com"
 )
 
 data class DramaSeries(
-    val id: String,
     val title: String,
-    val provider: String,
-    val genre: String,
-    val synopsis: String,
-    val posterUrl: String,
-    val accentTop: Color,
-    val accentBottom: Color,
-    val episodes: List<DramaEpisode>,
-    val isCustom: Boolean = false
+    val url: String,
+    val image: String,
+    val provider: String = "ReelFren",
+    val category: String = "Short Drama"
 )
 
-private enum class AppTab {
+data class ResolvedEpisode(
+    val number: Int,
+    val title: String,
+    val pageUrl: String,
+    val videoUrl: String = ""
+)
+
+private enum class MainTab {
     DISCOVER,
-    SAVED,
-    SOURCES
+    SAVED
 }
 
-private val STARTER_CATALOG = emptyList<DramaSeries>()
+private fun isReelFrenHost(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
+    return host == "reelfren.net" || host.endsWith(".reelfren.net")
+}
 
-private fun parseCatalogJson(raw: String, isCustom: Boolean): List<DramaSeries> {
-    if (raw.isBlank()) return emptyList()
+private fun isAllowedMainFrame(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
+    return host == "reelfren.net" ||
+        host.endsWith(".reelfren.net") ||
+        host == "cloudflare.com" ||
+        host.endsWith(".cloudflare.com")
+}
+
+private fun isBlockedAdUri(uri: Uri?): Boolean {
+    if (uri == null) return false
+    val host = uri.host?.lowercase() ?: return false
+    if (host == "cloudflare.com" || host.endsWith(".cloudflare.com")) return false
+    if (BLOCKED_AD_DOMAINS.any { domain -> host == domain || host.endsWith(".$domain") }) {
+        return true
+    }
+    val full = uri.toString().lowercase()
+    return full.contains("popunder") || full.contains("pagead/js/adsbygoogle.js")
+}
+
+private fun isVideoStreamUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    val lower = url.lowercase()
+    if (!lower.startsWith("http://") && !lower.startsWith("https://")) return false
+    if (isBlockedAdUri(Uri.parse(url))) return false
+    val path = runCatching { Uri.parse(url).path?.lowercase().orEmpty() }.getOrDefault("")
+    return path.endsWith(".m3u8") ||
+        path.endsWith(".mp4") ||
+        path.endsWith(".mpd") ||
+        lower.contains(".m3u8?") ||
+        lower.contains(".mp4?") ||
+        lower.contains("/hls/") ||
+        lower.contains("mime=video")
+}
+
+private fun emptyBlockedResponse(): WebResourceResponse =
+    WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+
+private fun readCachedCatalog(context: Context): List<DramaSeries> {
+    val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(KEY_CATALOG_CACHE, null) ?: return emptyList()
     return runCatching {
-        val trimmed = raw.trim()
-        val array = if (trimmed.startsWith("{")) {
-            JSONObject(trimmed).optJSONArray("series")
-                ?: JSONObject(trimmed).optJSONArray("dramas")
-                ?: JSONObject(trimmed).optJSONArray("items")
-                ?: JSONArray()
-        } else {
-            JSONArray(trimmed)
-        }
-        val palettes = listOf(
-            Color(0xFF4C1D95) to Color(0xFF0F172A),
-            Color(0xFF831843) to Color(0xFF1E1B4B),
-            Color(0xFF1E3A8A) to Color(0xFF09090B),
-            Color(0xFF7F1D1D) to Color(0xFF18181B),
-            Color(0xFF0F766E) to Color(0xFF111827)
-        )
+        val array = JSONArray(raw)
         buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val title = obj.optString("title").trim()
-                val provider = obj.optString("provider", "Melolo").trim().ifBlank { "Melolo" }
-                val genre = obj.optString("genre", "Short Drama").trim().ifBlank { "Short Drama" }
-                val synopsis = obj.optString("synopsis", "").trim()
-                val poster = obj.optString("poster", obj.optString("image", "")).trim()
-                val id = obj.optString("id", "").trim().ifBlank {
-                    "${provider.lowercase()}-${title.lowercase().replace(Regex("[^a-z0-9]+"), "-")}"
-                }
-                val epArray = obj.optJSONArray("episodes") ?: JSONArray()
-                val episodes = buildList {
-                    for (j in 0 until epArray.length()) {
-                        val epObj = epArray.optJSONObject(j) ?: continue
-                        val videoUrl = epObj.optString("videoUrl", epObj.optString("url", "")).trim()
-                        if (videoUrl.startsWith("https://") || videoUrl.startsWith("http://")) {
-                            add(
-                                DramaEpisode(
-                                    number = epObj.optInt("number", j + 1),
-                                    title = epObj.optString("title", "Episode ${j + 1}").trim()
-                                        .ifBlank { "Episode ${j + 1}" },
-                                    videoUrl = videoUrl
-                                )
-                            )
-                        }
-                    }
-                }
-                val singleVideo = obj.optString("videoUrl", "").trim()
-                val finalEpisodes = if (episodes.isNotEmpty()) {
-                    episodes
-                } else if (singleVideo.startsWith("https://") || singleVideo.startsWith("http://")) {
-                    listOf(DramaEpisode(1, "Episode 1", singleVideo))
-                } else {
-                    emptyList()
-                }
-                if (title.isNotBlank() && finalEpisodes.isNotEmpty()) {
-                    val palette = palettes[i % palettes.size]
+                val url = obj.optString("url").trim()
+                if (title.isNotBlank() && isReelFrenHost(url)) {
                     add(
                         DramaSeries(
-                            id = id,
                             title = title,
-                            provider = provider,
-                            genre = genre,
-                            synopsis = synopsis,
-                            posterUrl = poster,
-                            accentTop = palette.first,
-                            accentBottom = palette.second,
-                            episodes = finalEpisodes,
-                            isCustom = isCustom
+                            url = url,
+                            image = obj.optString("image").trim(),
+                            provider = obj.optString("provider", "ReelFren").trim().ifBlank { "ReelFren" },
+                            category = obj.optString("category", "Short Drama").trim().ifBlank { "Short Drama" }
                         )
                     )
                 }
             }
-        }
+        }.distinctBy { it.url }
     }.getOrDefault(emptyList())
 }
 
-private fun serializeCatalogJson(seriesList: List<DramaSeries>): String {
+private fun writeCachedCatalog(context: Context, dramas: List<DramaSeries>) {
     val array = JSONArray()
-    seriesList.forEach { series ->
-        val epArray = JSONArray()
-        series.episodes.forEach { ep ->
-            epArray.put(JSONObject().apply {
-                put("number", ep.number)
-                put("title", ep.title)
-                put("videoUrl", ep.videoUrl)
-            })
-        }
+    dramas.forEach { drama ->
         array.put(JSONObject().apply {
-            put("id", series.id)
-            put("title", series.title)
-            put("provider", series.provider)
-            put("genre", series.genre)
-            put("synopsis", series.synopsis)
-            put("poster", series.posterUrl)
-            put("episodes", epArray)
+            put("title", drama.title)
+            put("url", drama.url)
+            put("image", drama.image)
+            put("provider", drama.provider)
+            put("category", drama.category)
         })
     }
-    return array.toString()
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_CATALOG_CACHE, array.toString())
+        .apply()
 }
-
-private suspend fun fetchCleanFeed(feedUrl: String): Result<List<DramaSeries>> =
-    withContext(Dispatchers.IO) {
-        runCatching {
-            val conn = (URL(feedUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10_000
-                readTimeout = 12_000
-                setRequestProperty("Accept", "application/json")
-            }
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                error("Feed returned HTTP $code")
-            }
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val parsed = parseCatalogJson(body, isCustom = false)
-            if (parsed.isEmpty()) {
-                error("No valid series with episode video URLs found in JSON feed.")
-            }
-            parsed
-        }
-    }
 
 private fun formatDuration(ms: Long): String {
     if (ms <= 0L) return "0:00"
     val totalSec = ms / 1000L
-    val mins = totalSec / 60L
-    val secs = totalSec % 60L
-    return "%d:%02d".format(mins, secs)
+    return "%d:%02d".format(totalSec / 60L, totalSec % 60L)
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+private fun configureWebView(webView: WebView, autoplayMedia: Boolean): String {
+    val cookieManager = CookieManager.getInstance()
+    cookieManager.setAcceptCookie(true)
+    cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+    webView.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        loadsImagesAutomatically = true
+        mediaPlaybackRequiresUserGesture = !autoplayMedia
+        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        setSupportMultipleWindows(true)
+        javaScriptCanOpenWindowsAutomatically = false
+        val defaultUa = userAgentString ?: ""
+        if (defaultUa.isNotBlank()) {
+            userAgentString = defaultUa
+                .replace("; wv)", ")")
+                .replace("Version/4.0 ", "")
+        }
+    }
+    return webView.settings.userAgentString ?: ""
+}
+
+private val POPUP_SHIELD_JS = """
+    (function() {
+      if (!window.__dpPopupShieldInstalled) {
+        window.__dpPopupShieldInstalled = true;
+        window.open = function(u) {
+          try {
+            if (u && typeof u === 'string') {
+              var abs = new URL(u, location.href);
+              var h = abs.hostname.toLowerCase();
+              if ((h === 'reelfren.net' || h.endsWith('.reelfren.net')) &&
+                  !/^\/(go|out|redirect|pop|ads?)\b/i.test(abs.pathname)) {
+                location.href = abs.href;
+              }
+            }
+          } catch (_) {}
+          return null;
+        };
+        if (window.Notification) {
+          try {
+            window.Notification.requestPermission = function() {
+              return Promise.resolve('denied');
+            };
+          } catch (_) {}
+        }
+        document.addEventListener('click', function(e) {
+          try {
+            var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (a) {
+              var raw = a.getAttribute('href') || '';
+              if (raw && !raw.startsWith('#') && !raw.startsWith('javascript:')) {
+                var u = new URL(raw, location.href);
+                var h = u.hostname.toLowerCase();
+                var sameSite = h === 'reelfren.net' || h.endsWith('.reelfren.net');
+                if (!sameSite) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                  a.style.pointerEvents = 'none';
+                  return false;
+                }
+                if (a.getAttribute('target') === '_blank') {
+                  a.removeAttribute('target');
+                }
+              }
+            }
+            var el = e.target;
+            if (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
+              var cs = window.getComputedStyle(el);
+              var rect = el.getBoundingClientRect();
+              var covers = rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.45;
+              var noMedia = !el.querySelector('video, iframe[src*="reelfren"], input, button');
+              var transparent = cs.opacity === '0' || cs.backgroundColor === 'rgba(0, 0, 0, 0)' || cs.backgroundColor === 'transparent';
+              if ((cs.position === 'fixed' || cs.position === 'absolute') && covers && noMedia && transparent && (parseInt(cs.zIndex, 10) || 0) >= 50) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                el.style.pointerEvents = 'none';
+                el.style.display = 'none';
+                return false;
+              }
+            }
+          } catch (_) {}
+        }, true);
+      }
+      var sweep = function() {
+        try {
+          if (!document.getElementById('dp-adblock-style') && document.head) {
+            var st = document.createElement('style');
+            st.id = 'dp-adblock-style';
+            st.textContent = [
+              'ins.adsbygoogle',
+              'iframe[src*="doubleclick"]',
+              'iframe[src*="googlesyndication"]',
+              'iframe[src*="adsterra"]',
+              'iframe[src*="highperformanceformat"]',
+              'iframe[src*="topcreativeformat"]',
+              'iframe[src*="effectivegatecpm"]',
+              'iframe[src*="popads"]',
+              'iframe[src*="monetag"]',
+              'iframe[src*="hilltopads"]',
+              'a[href*="shopee"]',
+              'a[href*="lazada"]',
+              '[class*="popunder"]',
+              '[class*="ad-overlay"]',
+              '[class*="ad_overlay"]',
+              '[id*="ad-overlay"]',
+              '[id*="popunder"]'
+            ].join(', ') + ' { display: none !important; pointer-events: none !important; visibility: hidden !important; }';
+            document.head.appendChild(st);
+          }
+          var anchors = document.querySelectorAll('a[href*="shopee"], a[href*="lazada"], a[target="_blank"]');
+          for (var i = 0; i < anchors.length; i++) {
+            var link = anchors[i];
+            try {
+              var u = new URL(link.getAttribute('href') || '', location.href);
+              var h = u.hostname.toLowerCase();
+              if (h && h !== 'reelfren.net' && !h.endsWith('.reelfren.net')) {
+                link.style.pointerEvents = 'none';
+                if (link.textContent.trim().length === 0 && !link.querySelector('img')) {
+                  link.style.display = 'none';
+                }
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      };
+      sweep();
+      if (!window.__dpMutationObserver && document.documentElement) {
+        window.__dpMutationObserver = new MutationObserver(sweep);
+        window.__dpMutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+      }
+    })();
+""".trimIndent()
+
+private fun buildAntiPopupChromeClient(
+    onProgress: (Int) -> Unit = {},
+    onShowCustom: (View?, WebChromeClient.CustomViewCallback?) -> Unit = { _, _ -> },
+    onHideCustom: () -> Unit = {}
+): WebChromeClient = object : WebChromeClient() {
+    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+        onProgress(newProgress)
+    }
+
+    override fun onCreateWindow(
+        view: WebView?,
+        isDialog: Boolean,
+        isUserGesture: Boolean,
+        resultMsg: Message?
+    ): Boolean {
+        val hitUrl = view?.hitTestResult?.extra
+        if (isUserGesture && hitUrl != null && isReelFrenHost(hitUrl) && !isBlockedAdUri(Uri.parse(hitUrl))) {
+            view.loadUrl(hitUrl)
+        }
+        return false
+    }
+
+    override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+        result?.cancel()
+        return true
+    }
+
+    override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+        result?.cancel()
+        return true
+    }
+
+    override fun onJsPrompt(
+        view: WebView?,
+        url: String?,
+        message: String?,
+        defaultValue: String?,
+        result: JsPromptResult?
+    ): Boolean {
+        result?.cancel()
+        return true
+    }
+
+    override fun onJsBeforeUnload(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+        result?.confirm()
+        return true
+    }
+
+    override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+        onShowCustom(view, callback)
+    }
+
+    override fun onHideCustomView() {
+        onHideCustom()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -275,84 +486,40 @@ private fun DramaPocketApp() {
     val prefs = remember(context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
-    val scope = rememberCoroutineScope()
 
-    var activeTab by remember { mutableStateOf(AppTab.DISCOVER) }
+    var dramas by remember { mutableStateOf(readCachedCatalog(context)) }
+    var loading by remember { mutableStateOf(dramas.isEmpty()) }
+    var needsVerification by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var selectedDrama by remember { mutableStateOf<DramaSeries?>(null) }
     var selectedProvider by remember { mutableStateOf("All") }
     var search by remember { mutableStateOf("") }
-
-    var remoteCatalog by remember {
-        mutableStateOf(
-            parseCatalogJson(prefs.getString(KEY_REMOTE_CATALOG, "") ?: "", isCustom = false)
-        )
-    }
-    var customSeries by remember {
-        mutableStateOf(
-            parseCatalogJson(prefs.getString(KEY_CUSTOM_DRAMAS, "") ?: "", isCustom = true)
-        )
-    }
+    var activeTab by remember { mutableStateOf(MainTab.DISCOVER) }
     var favorites by remember {
         mutableStateOf(prefs.getStringSet(KEY_FAVORITES, emptySet())?.toSet() ?: emptySet())
     }
-    var feedUrl by remember {
-        mutableStateOf(prefs.getString(KEY_FEED_URL, "") ?: "")
-    }
-    var syncMessage by remember { mutableStateOf<String?>(null) }
-    var syncing by remember { mutableStateOf(false) }
+    var showCatalogLoader by remember { mutableStateOf(true) }
+    var reloadKey by remember { mutableIntStateOf(0) }
 
-    var activePlayerDrama by remember { mutableStateOf<DramaSeries?>(null) }
-    var activeStartEpisode by remember { mutableIntStateOf(0) }
-
-    val allCatalog = remember(remoteCatalog, customSeries) {
-        val base = remoteCatalog
-        (customSeries + base).distinctBy { it.id }
+    val providerList = remember(dramas) {
+        val dynamic = dramas.map { it.provider }
+            .filter { it.isNotBlank() && !it.equals("ReelFren", ignoreCase = true) }
+            .distinct()
+        (BASE_PROVIDERS + dynamic).distinct()
     }
 
-    fun toggleFavorite(seriesId: String) {
-        val next = if (favorites.contains(seriesId)) favorites - seriesId else favorites + seriesId
+    fun toggleFavorite(url: String) {
+        val next = if (favorites.contains(url)) favorites - url else favorites + url
         favorites = next
         prefs.edit().putStringSet(KEY_FAVORITES, next).apply()
     }
 
-    fun openPlayer(series: DramaSeries) {
-        val savedIndex = prefs.getInt("$KEY_PROGRESS_PREFIX${series.id}", 0)
-            .coerceIn(0, (series.episodes.size - 1).coerceAtLeast(0))
-        activeStartEpisode = savedIndex
-        activePlayerDrama = series
-    }
-
-    fun saveEpisodeProgress(seriesId: String, index: Int) {
-        prefs.edit().putInt("$KEY_PROGRESS_PREFIX$seriesId", index).apply()
-    }
-
-    fun addCustomSeries(series: DramaSeries) {
-        val updated = listOf(series) + customSeries.filterNot { it.id == series.id }
-        customSeries = updated
-        prefs.edit().putString(KEY_CUSTOM_DRAMAS, serializeCatalogJson(updated)).apply()
-    }
-
-    fun syncRemoteFeed(url: String) {
-        val clean = url.trim()
-        if (!clean.startsWith("https://") && !clean.startsWith("http://")) {
-            syncMessage = "Enter a valid https:// JSON catalog URL."
-            return
-        }
-        syncing = true
-        syncMessage = null
-        prefs.edit().putString(KEY_FEED_URL, clean).apply()
-        feedUrl = clean
-        scope.launch {
-            val result = fetchCleanFeed(clean)
-            syncing = false
-            result.onSuccess { list ->
-                remoteCatalog = list
-                prefs.edit().putString(KEY_REMOTE_CATALOG, serializeCatalogJson(list)).apply()
-                syncMessage = "Loaded ${list.size} playable series."
-                activeTab = AppTab.DISCOVER
-            }.onFailure { err ->
-                syncMessage = err.message ?: "Failed to load JSON feed."
-            }
-        }
+    fun refreshCatalog() {
+        loading = dramas.isEmpty()
+        needsVerification = false
+        error = null
+        showCatalogLoader = true
+        reloadKey++
     }
 
     val darkScheme = darkColorScheme(
@@ -365,15 +532,14 @@ private fun DramaPocketApp() {
     )
 
     MaterialTheme(colorScheme = darkScheme) {
-        val playing = activePlayerDrama
-        if (playing != null) {
-            VerticalDramaPlayer(
-                drama = playing,
-                initialEpisodeIndex = activeStartEpisode,
-                isFavorite = favorites.contains(playing.id),
-                onToggleFavorite = { toggleFavorite(playing.id) },
-                onEpisodeChanged = { index -> saveEpisodeProgress(playing.id, index) },
-                onClose = { activePlayerDrama = null }
+        val activeDrama = selectedDrama
+        if (activeDrama != null) {
+            DramaPlayerHost(
+                drama = activeDrama,
+                prefs = prefs,
+                isFavorite = favorites.contains(activeDrama.url),
+                onToggleFavorite = { toggleFavorite(activeDrama.url) },
+                onClose = { selectedDrama = null }
             )
         } else {
             Scaffold(
@@ -384,64 +550,153 @@ private fun DramaPocketApp() {
                         contentColor = Color.White
                     ) {
                         NavigationBarItem(
-                            selected = activeTab == AppTab.DISCOVER,
-                            onClick = { activeTab = AppTab.DISCOVER },
+                            selected = activeTab == MainTab.DISCOVER,
+                            onClick = { activeTab = MainTab.DISCOVER },
                             icon = { Icon(Icons.Default.Explore, contentDescription = "Discover") },
                             label = { Text("Discover") }
                         )
                         NavigationBarItem(
-                            selected = activeTab == AppTab.SAVED,
-                            onClick = { activeTab = AppTab.SAVED },
+                            selected = activeTab == MainTab.SAVED,
+                            onClick = { activeTab = MainTab.SAVED },
                             icon = { Icon(Icons.Default.Bookmark, contentDescription = "Saved") },
                             label = { Text("Saved (${favorites.size})") }
-                        )
-                        NavigationBarItem(
-                            selected = activeTab == AppTab.SOURCES,
-                            onClick = { activeTab = AppTab.SOURCES },
-                            icon = { Icon(Icons.Default.Link, contentDescription = "Sources") },
-                            label = { Text("Sources") }
                         )
                     }
                 }
             ) { padding ->
-                when (activeTab) {
-                    AppTab.DISCOVER -> DiscoverScreen(
-                        modifier = Modifier.padding(padding),
-                        catalog = allCatalog,
-                        selectedProvider = selectedProvider,
-                        onSelectProvider = { selectedProvider = it },
-                        search = search,
-                        onSearchChange = { search = it },
-                        favorites = favorites,
-                        onToggleFavorite = ::toggleFavorite,
-                        onWatch = ::openPlayer
-                    )
-
-                    AppTab.SAVED -> SavedScreen(
-                        modifier = Modifier.padding(padding),
-                        savedDramas = allCatalog.filter { favorites.contains(it.id) },
-                        onToggleFavorite = ::toggleFavorite,
-                        onWatch = ::openPlayer,
-                        onBrowseDiscover = { activeTab = AppTab.DISCOVER }
-                    )
-
-                    AppTab.SOURCES -> SourcesScreen(
-                        modifier = Modifier.padding(padding),
-                        feedUrl = feedUrl,
-                        syncing = syncing,
-                        syncMessage = syncMessage,
-                        hasRemoteCatalog = remoteCatalog.isNotEmpty(),
-                        onSyncFeed = ::syncRemoteFeed,
-                        onResetToStarter = {
-                            remoteCatalog = emptyList()
-                            prefs.edit().remove(KEY_REMOTE_CATALOG).apply()
-                            syncMessage = "Remote catalog cleared. No sample videos are included."
-                        },
-                        onAddCustomSeries = { newSeries ->
-                            addCustomSeries(newSeries)
-                            activeTab = AppTab.DISCOVER
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .background(Color(0xFF0B0B10))
+                ) {
+                    if (showCatalogLoader) {
+                        Column(Modifier.fillMaxSize()) {
+                            if (needsVerification) {
+                                Surface(
+                                    color = Color(0xFF1E1B2E),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "ReelFren verification needed once to sync catalog.",
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { refreshCatalog() }) {
+                                            Text("Reload", color = Color(0xFFFF3D71))
+                                        }
+                                    }
+                                }
+                            }
+                            key(reloadKey) {
+                                CatalogWebLoader(
+                                    modifier = if (dramas.isEmpty() || needsVerification) Modifier.fillMaxSize() else Modifier.size(1.dp),
+                                    onVerificationRequired = {
+                                        loading = false
+                                        error = null
+                                        needsVerification = true
+                                    },
+                                    onCatalogLoaded = { list ->
+                                        CookieManager.getInstance().flush()
+                                        dramas = list
+                                        writeCachedCatalog(context, list)
+                                        loading = false
+                                        needsVerification = false
+                                        error = null
+                                        showCatalogLoader = false
+                                    },
+                                    onFailure = { message ->
+                                        loading = false
+                                        needsVerification = false
+                                        if (dramas.isEmpty()) {
+                                            error = message
+                                        }
+                                        showCatalogLoader = false
+                                    }
+                                )
+                            }
                         }
-                    )
+                    }
+
+                    when {
+                        needsVerification && showCatalogLoader -> {
+                            // Keep WebView visible for one-time ReelFren verification.
+                        }
+
+                        loading && dramas.isEmpty() -> {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(Color(0xFF0B0B10)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(color = Color(0xFFFF3D71))
+                                    Spacer(Modifier.height(14.dp))
+                                    Text("Loading ReelFren catalog…", color = Color(0xFFA1A1AA))
+                                }
+                            }
+                        }
+
+                        error != null && dramas.isEmpty() -> {
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(Color(0xFF0B0B10))
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(error!!, color = Color(0xFFD4D4D8), fontSize = 14.sp)
+                                Spacer(Modifier.height(14.dp))
+                                Button(
+                                    onClick = { refreshCatalog() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71))
+                                ) {
+                                    Text("Try again")
+                                }
+                            }
+                        }
+
+                        else -> {
+                            val filtered = remember(dramas, selectedProvider, search, activeTab, favorites) {
+                                val q = search.trim()
+                                dramas.filter { item ->
+                                    val matchesTab = activeTab != MainTab.SAVED || favorites.contains(item.url)
+                                    val matchesProvider = selectedProvider == "All" ||
+                                        item.provider.equals(selectedProvider, ignoreCase = true) ||
+                                        item.title.contains(selectedProvider, ignoreCase = true) ||
+                                        item.url.contains(selectedProvider, ignoreCase = true)
+                                    val matchesSearch = q.isBlank() ||
+                                        item.title.contains(q, ignoreCase = true) ||
+                                        item.provider.contains(q, ignoreCase = true)
+                                    matchesTab && matchesProvider && matchesSearch
+                                }
+                            }
+
+                            DiscoverGridScreen(
+                                dramas = filtered,
+                                isSavedTab = activeTab == MainTab.SAVED,
+                                providers = providerList,
+                                selectedProvider = selectedProvider,
+                                onSelectProvider = { selectedProvider = it },
+                                search = search,
+                                onSearchChange = { search = it },
+                                favorites = favorites,
+                                onToggleFavorite = ::toggleFavorite,
+                                onRefresh = { refreshCatalog() },
+                                onSelectDrama = { selectedDrama = it }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -449,34 +704,24 @@ private fun DramaPocketApp() {
 }
 
 @Composable
-private fun DiscoverScreen(
-    modifier: Modifier = Modifier,
-    catalog: List<DramaSeries>,
+private fun DiscoverGridScreen(
+    dramas: List<DramaSeries>,
+    isSavedTab: Boolean,
+    providers: List<String>,
     selectedProvider: String,
     onSelectProvider: (String) -> Unit,
     search: String,
     onSearchChange: (String) -> Unit,
     favorites: Set<String>,
     onToggleFavorite: (String) -> Unit,
-    onWatch: (DramaSeries) -> Unit
+    onRefresh: () -> Unit,
+    onSelectDrama: (DramaSeries) -> Unit
 ) {
-    val filtered = remember(catalog, selectedProvider, search) {
-        val query = search.trim()
-        catalog.filter { series ->
-            val matchesProvider = selectedProvider == "All" ||
-                series.provider.equals(selectedProvider, ignoreCase = true)
-            val matchesQuery = query.isBlank() ||
-                series.title.contains(query, ignoreCase = true) ||
-                series.genre.contains(query, ignoreCase = true) ||
-                series.provider.contains(query, ignoreCase = true)
-            matchesProvider && matchesQuery
-        }
-    }
-    val featured = filtered.firstOrNull()
+    val featured = if (!isSavedTab && search.isBlank()) dramas.firstOrNull() else null
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF0B0B10)),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
@@ -492,15 +737,22 @@ private fun DiscoverScreen(
                 ) {
                     Column {
                         Text(
-                            "DramaPocket",
+                            if (isSavedTab) "Saved Dramas" else "DramaPocket",
                             fontSize = 26.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
                         Text(
-                            "Native vertical player · No embedded webpages",
+                            "ReelFren catalog · Ad-free vertical player",
                             fontSize = 12.sp,
                             color = Color(0xFFA1A1AA)
+                        )
+                    }
+                    IconButton(onClick = onRefresh) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Refresh catalog",
+                            tint = Color(0xFFFF3D71)
                         )
                     }
                 }
@@ -531,7 +783,7 @@ private fun DiscoverScreen(
                 )
 
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(PROVIDERS) { provider ->
+                    items(providers) { provider ->
                         val active = provider == selectedProvider
                         Surface(
                             shape = RoundedCornerShape(50),
@@ -553,18 +805,82 @@ private fun DiscoverScreen(
             }
         }
 
-        if (featured != null && search.isBlank()) {
+        if (featured != null) {
             item(span = { GridItemSpan(2) }) {
-                FeaturedSpotlightCard(
-                    drama = featured,
-                    isFavorite = favorites.contains(featured.id),
-                    onToggleFavorite = { onToggleFavorite(featured.id) },
-                    onWatch = { onWatch(featured) }
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(210.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF1E1B2E))
+                        .clickable { onSelectDrama(featured) }
+                ) {
+                    AsyncImage(
+                        model = featured.image.ifBlank { null },
+                        contentDescription = featured.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.88f))
+                                )
+                            )
+                    )
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${featured.provider} · Featured",
+                                color = Color(0xFFE4E4E7),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            IconButton(onClick = { onToggleFavorite(featured.url) }) {
+                                Icon(
+                                    if (favorites.contains(featured.url)) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = "Save",
+                                    tint = if (favorites.contains(featured.url)) Color(0xFFFF3D71) else Color.White
+                                )
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = featured.title,
+                                color = Color.White,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Button(
+                                onClick = { onSelectDrama(featured) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71)),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Watch Vertical", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        if (filtered.isEmpty()) {
+        if (dramas.isEmpty()) {
             item(span = { GridItemSpan(2) }) {
                 Box(
                     Modifier
@@ -573,119 +889,20 @@ private fun DiscoverScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (catalog.isEmpty()) "No verified playable dramas yet. Add a permitted catalog feed in Sources." else "No dramas found in $selectedProvider.",
+                        if (isSavedTab) "No saved dramas yet." else "No dramas found for $selectedProvider.",
                         color = Color(0xFFA1A1AA),
                         fontSize = 14.sp
                     )
                 }
             }
         } else {
-            items(filtered, key = { it.id }) { drama ->
+            items(dramas, key = { it.url }) { drama ->
                 PortraitDramaCard(
                     drama = drama,
-                    isFavorite = favorites.contains(drama.id),
-                    onToggleFavorite = { onToggleFavorite(drama.id) },
-                    onClick = { onWatch(drama) }
+                    isFavorite = favorites.contains(drama.url),
+                    onToggleFavorite = { onToggleFavorite(drama.url) },
+                    onClick = { onSelectDrama(drama) }
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeaturedSpotlightCard(
-    drama: DramaSeries,
-    isFavorite: Boolean,
-    onToggleFavorite: () -> Unit,
-    onWatch: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(210.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.linearGradient(listOf(drama.accentTop, drama.accentBottom)))
-            .clickable(onClick = onWatch)
-    ) {
-        if (drama.posterUrl.isNotBlank()) {
-            AsyncImage(
-                model = drama.posterUrl,
-                contentDescription = drama.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.88f))
-                        )
-                    )
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${drama.provider} · ${drama.genre}",
-                    color = Color(0xFFE4E4E7),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                IconButton(onClick = onToggleFavorite) {
-                    Icon(
-                        if (isFavorite) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = "Save",
-                        tint = if (isFavorite) Color(0xFFFF3D71) else Color.White
-                    )
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = drama.title,
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (drama.synopsis.isNotBlank()) {
-                    Text(
-                        text = drama.synopsis,
-                        color = Color(0xFFD4D4D8),
-                        fontSize = 12.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = onWatch,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71)),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Watch Now", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    }
-                    Text(
-                        text = "${drama.episodes.size} episodes",
-                        color = Color(0xFFE4E4E7),
-                        fontSize = 12.sp
-                    )
-                }
             }
         }
     }
@@ -709,33 +926,14 @@ private fun PortraitDramaCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(3f / 4f)
-                .background(Brush.verticalGradient(listOf(drama.accentTop, drama.accentBottom)))
+                .background(Color(0xFF1E1B2E))
         ) {
-            if (drama.posterUrl.isNotBlank()) {
-                AsyncImage(
-                    model = drama.posterUrl,
-                    contentDescription = drama.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = drama.title,
-                        color = Color.White.copy(alpha = 0.88f),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
+            AsyncImage(
+                model = drama.image.ifBlank { null },
+                contentDescription = drama.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
             Box(
                 Modifier
                     .fillMaxSize()
@@ -746,7 +944,6 @@ private fun PortraitDramaCard(
                         )
                     )
             )
-
             IconButton(
                 onClick = onToggleFavorite,
                 modifier = Modifier
@@ -759,9 +956,8 @@ private fun PortraitDramaCard(
                     tint = if (isFavorite) Color(0xFFFF3D71) else Color.White
                 )
             }
-
             Text(
-                text = "${drama.provider} · ${drama.episodes.size} eps",
+                text = drama.provider,
                 color = Color(0xFFE4E4E7),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
@@ -770,7 +966,6 @@ private fun PortraitDramaCard(
                     .padding(10.dp)
             )
         }
-
         Column(Modifier.padding(10.dp)) {
             Text(
                 text = drama.title,
@@ -780,113 +975,427 @@ private fun PortraitDramaCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                text = drama.genre,
-                color = Color(0xFFA1A1AA),
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        }
+    }
+}
+
+private class CatalogBridge(
+    private val onVerification: () -> Unit,
+    private val onCatalog: (List<DramaSeries>) -> Unit,
+    private val onError: (String) -> Unit
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onVerificationRequired() {
+        mainHandler.post { onVerification() }
+    }
+
+    @JavascriptInterface
+    fun onCatalog(json: String) {
+        val parsed = runCatching {
+            val array = JSONArray(json)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val title = item.optString("title").trim()
+                    val url = item.optString("url").trim()
+                    val image = item.optString("image").trim()
+                    val provider = item.optString("provider", "ReelFren").trim().ifBlank { "ReelFren" }
+                    if (title.length > 2 && isReelFrenHost(url)) {
+                        add(DramaSeries(title = title, url = url, image = image, provider = provider))
+                    }
+                }
+            }.distinctBy { it.url }
+        }.getOrElse { emptyList() }
+
+        mainHandler.post {
+            if (parsed.isNotEmpty()) {
+                onCatalog(parsed)
+            } else {
+                onError("ReelFren loaded, but no drama cards were detected.")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun onFailure(message: String) {
+        mainHandler.post { onError(message) }
+    }
+}
+
+@Composable
+private fun CatalogWebLoader(
+    modifier: Modifier = Modifier,
+    onVerificationRequired: () -> Unit,
+    onCatalogLoaded: (List<DramaSeries>) -> Unit,
+    onFailure: (String) -> Unit
+) {
+    val latestOnVerification by rememberUpdatedState(onVerificationRequired)
+    val latestOnCatalog by rememberUpdatedState(onCatalogLoaded)
+    val latestOnFailure by rememberUpdatedState(onFailure)
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewRef?.apply {
+                stopLoading()
+                destroy()
+            }
+            webViewRef = null
+        }
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            WebView(context).apply {
+                configureWebView(this, autoplayMedia = false)
+                webChromeClient = buildAntiPopupChromeClient()
+                var sawHttp403 = false
+
+                addJavascriptInterface(
+                    CatalogBridge(
+                        onVerification = { latestOnVerification() },
+                        onCatalog = { list -> latestOnCatalog(list) },
+                        onError = { msg -> latestOnFailure(msg) }
+                    ),
+                    "DramaPocketBridge"
+                )
+
+                webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView,
+                        request: WebResourceRequest
+                    ): WebResourceResponse? {
+                        if (isBlockedAdUri(request.url)) return emptyBlockedResponse()
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView,
+                        request: WebResourceRequest
+                    ): Boolean {
+                        val target = request.url
+                        val scheme = target.scheme?.lowercase()
+                        if (scheme != "http" && scheme != "https") return true
+                        if (isBlockedAdUri(target)) return true
+                        if (request.isForMainFrame && !isAllowedMainFrame(target.toString())) return true
+                        return false
+                    }
+
+                    override fun onReceivedHttpError(
+                        view: WebView,
+                        request: WebResourceRequest,
+                        errorResponse: WebResourceResponse
+                    ) {
+                        if (request.isForMainFrame && errorResponse.statusCode == 403) {
+                            sawHttp403 = true
+                        }
+                    }
+
+                    override fun onPageFinished(view: WebView, url: String) {
+                        super.onPageFinished(view, url)
+                        if (!isReelFrenHost(url)) return
+                        val script = """
+                            (function() {
+                              if (window.__dpTimer) clearInterval(window.__dpTimer);
+                              let attempts = 0;
+                              let verificationNotified = false;
+                              const knownProviders = ['Melolo', 'DramaBox', 'ReelShort', 'ShortMax', 'FlexTV', 'NetShort', 'Vigloo', 'WeTV', 'GoodShort', 'MoboReels', 'Kalos'];
+                              const detectProvider = function(text, href) {
+                                const hay = (text + ' ' + href).toLowerCase();
+                                for (const p of knownProviders) {
+                                  if (hay.indexOf(p.toLowerCase()) !== -1) return p;
+                                }
+                                return 'ReelFren';
+                              };
+                              const isChallenge = function() {
+                                const title = (document.title || '').toLowerCase();
+                                return title.indexOf('just a moment') !== -1 ||
+                                  !!document.querySelector('#challenge-running, #challenge-form, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
+                              };
+                              const collect = function() {
+                                try {
+                                  if (isChallenge()) {
+                                    if (!verificationNotified) {
+                                      verificationNotified = true;
+                                      window.DramaPocketBridge.onVerificationRequired();
+                                    }
+                                    return false;
+                                  }
+                                  const preferred = Array.from(document.querySelectorAll('a[href*="/drama/"], a[href*="/series/"], a[href*="/watch/"]'));
+                                  const fallback = preferred.length > 0
+                                    ? preferred
+                                    : Array.from(document.querySelectorAll('a[href]')).filter(function(a) { return !!a.querySelector('img'); });
+                                  const blocked = ['/genre', '/tag', '/login', '/register', '/search', '/privacy', '/terms', '/about', '/contact', '/language'];
+                                  const seen = new Set();
+                                  const cards = [];
+                                  for (const a of fallback) {
+                                    const raw = a.getAttribute('href');
+                                    if (!raw || raw.startsWith('#') || raw.startsWith('javascript:')) continue;
+                                    const href = new URL(raw, location.href).href;
+                                    const parsedUrl = new URL(href);
+                                    if (!parsedUrl.hostname.endsWith('reelfren.net')) continue;
+                                    if (parsedUrl.pathname === '/' || blocked.some(function(p) { return parsedUrl.pathname.startsWith(p); })) continue;
+                                    const img = a.querySelector('img');
+                                    const titleEl = a.querySelector('h1, h2, h3, h4, [class*="title"], [class*="name"]');
+                                    const cardText = ((a.closest('article, li, div') || a).innerText || '');
+                                    const title = (
+                                      a.getAttribute('title') ||
+                                      (titleEl && titleEl.innerText) ||
+                                      (img && (img.getAttribute('alt') || img.getAttribute('title'))) ||
+                                      a.innerText ||
+                                      ''
+                                    ).trim().replace(/\s+/g, ' ');
+                                    const image = img ? (
+                                      img.currentSrc || img.src || img.getAttribute('data-src') ||
+                                      img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || ''
+                                    ) : '';
+                                    if (title.length > 2 && !seen.has(href)) {
+                                      seen.add(href);
+                                      cards.push({
+                                        title: title,
+                                        url: href,
+                                        image: image,
+                                        provider: detectProvider(cardText, href)
+                                      });
+                                    }
+                                  }
+                                  if (cards.length > 0) {
+                                    window.DramaPocketBridge.onCatalog(JSON.stringify(cards));
+                                    return true;
+                                  }
+                                  return false;
+                                } catch (e) {
+                                  window.DramaPocketBridge.onFailure('Could not read ReelFren catalog: ' + e.message);
+                                  return true;
+                                }
+                              };
+                              if (collect()) return;
+                              const maxAttempts = ${if (sawHttp403) 45 else 25};
+                              window.__dpTimer = setInterval(function() {
+                                attempts++;
+                                if (collect()) {
+                                  clearInterval(window.__dpTimer);
+                                  return;
+                                }
+                                if (attempts >= maxAttempts && !verificationNotified) {
+                                  clearInterval(window.__dpTimer);
+                                  window.DramaPocketBridge.onFailure('ReelFren did not return drama listings. Tap Try again.');
+                                }
+                              }, 1000);
+                            })();
+                        """.trimIndent()
+                        view.evaluateJavascript(script, null)
+                    }
+                }
+                webViewRef = this
+                loadUrl(CATALOG_URL)
+            }
+        }
+    )
+}
+
+private class StreamResolverBridge(
+    private val onVerification: () -> Unit,
+    private val onEpisodes: (List<ResolvedEpisode>) -> Unit,
+    private val onStreamUrl: (String, String) -> Unit
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onVerificationRequired() {
+        mainHandler.post { onVerification() }
+    }
+
+    @JavascriptInterface
+    fun onEpisodesFound(json: String) {
+        val parsed = runCatching {
+            val array = JSONArray(json)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val pageUrl = obj.optString("url").trim()
+                    val title = obj.optString("title").trim().ifBlank { "Episode ${i + 1}" }
+                    val num = obj.optInt("number", i + 1)
+                    if (pageUrl.startsWith("http")) {
+                        add(ResolvedEpisode(number = num, title = title, pageUrl = pageUrl))
+                    }
+                }
+            }.distinctBy { it.pageUrl }
+        }.getOrDefault(emptyList())
+
+        if (parsed.isNotEmpty()) {
+            mainHandler.post { onEpisodes(parsed) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onStreamFound(streamUrl: String, pageUrl: String) {
+        val clean = streamUrl.trim()
+        if (clean.startsWith("http") && !isBlockedAdUri(Uri.parse(clean))) {
+            mainHandler.post { onStreamUrl(clean, pageUrl.trim()) }
         }
     }
 }
 
 @Composable
-private fun SavedScreen(
-    modifier: Modifier = Modifier,
-    savedDramas: List<DramaSeries>,
-    onToggleFavorite: (String) -> Unit,
-    onWatch: (DramaSeries) -> Unit,
-    onBrowseDiscover: () -> Unit
+private fun DramaPlayerHost(
+    drama: DramaSeries,
+    prefs: android.content.SharedPreferences,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onClose: () -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF0B0B10))
-            .padding(16.dp)
-    ) {
-        Text(
-            "Saved Series",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
-        )
-        Text(
-            "Jump straight back into your vertical watchlist",
-            fontSize = 13.sp,
-            color = Color(0xFFA1A1AA)
-        )
-        Spacer(Modifier.height(16.dp))
+    val startEpIndex = remember(drama.url) {
+        prefs.getInt("$KEY_EP_PROGRESS_PREFIX${drama.url.hashCode()}", 0).coerceAtLeast(0)
+    }
 
-        if (savedDramas.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No saved dramas yet.", color = Color(0xFFA1A1AA))
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = onBrowseDiscover,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71))
-                    ) {
-                        Text("Explore Discover")
-                    }
-                }
+    var episodes by remember(drama.url) {
+        mutableStateOf(listOf(ResolvedEpisode(1, "Episode 1", drama.url)))
+    }
+    var resolvedUrls by remember(drama.url) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var targetLoadUrl by remember(drama.url) { mutableStateOf(drama.url) }
+    var activeEpisodeIndex by remember(drama.url) { mutableIntStateOf(0) }
+    var needsVerification by remember(drama.url) { mutableStateOf(false) }
+    var useCleanWebFallback by remember(drama.url) { mutableStateOf(false) }
+    var resolverTimeout by remember(drama.url) { mutableStateOf(false) }
+    var userAgentString by remember { mutableStateOf("") }
+
+    val currentEp = episodes.getOrNull(activeEpisodeIndex) ?: episodes.first()
+    val currentStreamUrl = resolvedUrls[currentEp.pageUrl] ?: resolvedUrls[targetLoadUrl]
+
+    LaunchedEffect(targetLoadUrl, resolvedUrls[targetLoadUrl]) {
+        resolverTimeout = false
+        if (resolvedUrls[targetLoadUrl] == null) {
+            delay(11_000)
+            if (resolvedUrls[targetLoadUrl] == null && !needsVerification) {
+                resolverTimeout = true
             }
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(savedDramas, key = { it.id }) { drama ->
+        }
+    }
+
+    LaunchedEffect(episodes.size, startEpIndex) {
+        if (startEpIndex in episodes.indices && activeEpisodeIndex == 0 && startEpIndex > 0) {
+            activeEpisodeIndex = startEpIndex
+            targetLoadUrl = episodes[startEpIndex].pageUrl
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // Hidden ad-blocked ReelFren resolver that extracts episode lists & real video streams
+        // (and becomes visible automatically ONLY if Cloudflare asks for verification or fallback is chosen).
+        val showResolverVisible = needsVerification || useCleanWebFallback
+
+        ReelFrenResolverWebView(
+            targetUrl = targetLoadUrl,
+            visible = showResolverVisible,
+            onUserAgentReady = { ua -> userAgentString = ua },
+            onVerificationRequired = { needsVerification = true },
+            onEpisodesFound = { found ->
+                episodes = found
+                val current = found.getOrNull(activeEpisodeIndex)
+                if (current != null && resolvedUrls[current.pageUrl] == null && current.pageUrl != targetLoadUrl) {
+                    targetLoadUrl = current.pageUrl
+                }
+            },
+            onStreamUrlCaptured = { streamUrl, sourcePageUrl ->
+                needsVerification = false
+                resolverTimeout = false
+                val alreadyAssignedElsewhere = resolvedUrls.entries.any {
+                    it.key != targetLoadUrl && it.value == streamUrl
+                }
+                if (!alreadyAssignedElsewhere || resolvedUrls.isEmpty()) {
+                    val key = sourcePageUrl.ifBlank { targetLoadUrl }
+                    resolvedUrls = resolvedUrls + (targetLoadUrl to streamUrl) +
+                        if (resolvedUrls[key] == null) mapOf(key to streamUrl) else emptyMap()
+                }
+            },
+            onClose = onClose
+        )
+
+        if (!showResolverVisible) {
+            if (currentStreamUrl != null) {
+                NativeVerticalDramaPlayer(
+                    dramaTitle = drama.title,
+                    provider = drama.provider,
+                    episodes = episodes,
+                    resolvedStreams = resolvedUrls,
+                    activeIndex = activeEpisodeIndex,
+                    userAgent = userAgentString,
+                    isFavorite = isFavorite,
+                    onToggleFavorite = onToggleFavorite,
+                    onSelectEpisode = { idx ->
+                        activeEpisodeIndex = idx
+                        prefs.edit().putInt("$KEY_EP_PROGRESS_PREFIX${drama.url.hashCode()}", idx).apply()
+                        val epUrl = episodes.getOrNull(idx)?.pageUrl ?: drama.url
+                        if (resolvedUrls[epUrl] == null) {
+                            targetLoadUrl = epUrl
+                        }
+                    },
+                    onOpenAdFreeWebFallback = { useCleanWebFallback = true },
+                    onClose = onClose
+                )
+            } else {
+                // Resolving real ReelFren stream overlay
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF0B0B10))
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF14141D))
-                            .clickable { onWatch(drama) }
-                            .padding(12.dp),
+                            .align(Alignment.Start),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            Modifier
-                                .width(68.dp)
-                                .height(92.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Brush.verticalGradient(listOf(drama.accentTop, drama.accentBottom))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (drama.posterUrl.isNotBlank()) {
-                                AsyncImage(
-                                    model = drama.posterUrl,
-                                    contentDescription = drama.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                            }
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                         }
-                        Column(
-                            Modifier
-                                .weight(1f)
-                                .padding(horizontal = 12.dp)
+                        Text(
+                            drama.title,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (!resolverTimeout) {
+                        CircularProgressIndicator(color = Color(0xFFFF3D71))
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "Loading ${drama.provider} stream from ReelFren…",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Blocking all ads and pop-ups",
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        Text(
+                            "This episode uses an embedded player format.",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { useCleanWebFallback = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71))
                         ) {
-                            Text(
-                                drama.title,
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "${drama.provider} · ${drama.episodes.size} episodes",
-                                color = Color(0xFFA1A1AA),
-                                fontSize = 12.sp
-                            )
-                        }
-                        IconButton(onClick = { onToggleFavorite(drama.id) }) {
-                            Icon(Icons.Default.Bookmark, contentDescription = "Remove", tint = Color(0xFFFF3D71))
+                            Text("Play in Ad-Blocked Player")
                         }
                     }
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
@@ -894,203 +1403,275 @@ private fun SavedScreen(
 }
 
 @Composable
-private fun SourcesScreen(
-    modifier: Modifier = Modifier,
-    feedUrl: String,
-    syncing: Boolean,
-    syncMessage: String?,
-    hasRemoteCatalog: Boolean,
-    onSyncFeed: (String) -> Unit,
-    onResetToStarter: () -> Unit,
-    onAddCustomSeries: (DramaSeries) -> Unit
+private fun ReelFrenResolverWebView(
+    targetUrl: String,
+    visible: Boolean,
+    onUserAgentReady: (String) -> Unit,
+    onVerificationRequired: () -> Unit,
+    onEpisodesFound: (List<ResolvedEpisode>) -> Unit,
+    onStreamUrlCaptured: (String, String) -> Unit,
+    onClose: () -> Unit
 ) {
-    var feedInput by remember(feedUrl) { mutableStateOf(feedUrl) }
-    var titleInput by remember { mutableStateOf("") }
-    var providerInput by remember { mutableStateOf("Melolo") }
-    var genreInput by remember { mutableStateOf("Romance") }
-    var posterInput by remember { mutableStateOf("") }
-    var videoInput by remember { mutableStateOf("") }
-    var formNotice by remember { mutableStateOf<String?>(null) }
+    val latestOnVerify by rememberUpdatedState(onVerificationRequired)
+    val latestOnEpisodes by rememberUpdatedState(onEpisodesFound)
+    val latestOnStream by rememberUpdatedState(onStreamUrlCaptured)
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var customView by remember { mutableStateOf<View?>(null) }
+    var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+
+    BackHandler(enabled = visible) {
+        if (customView != null) {
+            customCallback?.onCustomViewHidden()
+            customView = null
+            customCallback = null
+        } else if (webViewRef?.canGoBack() == true) {
+            webViewRef?.goBack()
+        } else {
+            onClose()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            customCallback?.onCustomViewHidden()
+            webViewRef?.apply {
+                stopLoading()
+                onPause()
+                destroy()
+            }
+            webViewRef = null
+        }
+    }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF0B0B10))
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        modifier = if (visible) Modifier.fillMaxSize().background(Color(0xFF0B0B10)) else Modifier.size(1.dp)
     ) {
-        Column {
-            Text(
-                "Catalog Sources",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            Text(
-                "Connect a permitted JSON catalog containing direct MP4/HLS episode streams. DramaPocket uses its own native catalog and player; it does not display provider webpages.",
-                fontSize = 13.sp,
-                color = Color(0xFFA1A1AA)
-            )
-        }
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF14141D))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text("Remote Catalog JSON Feed", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            OutlinedTextField(
-                value = feedInput,
-                onValueChange = { feedInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("https://.../catalog.json", color = Color(0xFF71717A)) },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFFF3D71),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                )
-            )
-            if (syncMessage != null) {
-                Text(syncMessage, color = Color(0xFFD4D4D8), fontSize = 12.sp)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { onSyncFeed(feedInput) },
-                    enabled = !syncing,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3D71))
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (syncing) "Loading…" else "Sync JSON")
-                }
-                if (hasRemoteCatalog) {
-                    OutlinedButton(onClick = onResetToStarter) {
-                        Text("Clear Catalog", color = Color.White)
-                    }
-                }
-            }
-        }
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF14141D))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text("Add Series Manually", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            OutlinedTextField(
-                value = titleInput,
-                onValueChange = { titleInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Series title") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFFF3D71),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                )
-            )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(PROVIDERS.drop(1)) { provider ->
-                    val selected = provider == providerInput
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = if (selected) Color(0xFF8B5CF6) else Color(0xFF1F1F2B),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .clickable { providerInput = provider }
-                    ) {
-                        Text(
-                            provider,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = genreInput,
-                onValueChange = { genreInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Genre") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFFF3D71),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                )
-            )
-            OutlinedTextField(
-                value = posterInput,
-                onValueChange = { posterInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Poster image URL (optional)") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFFF3D71),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                )
-            )
-            OutlinedTextField(
-                value = videoInput,
-                onValueChange = { videoInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Episode 1 stream URL (.mp4 or .m3u8)") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFFF3D71),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                )
-            )
-            if (formNotice != null) {
-                Text(formNotice!!, color = Color(0xFFFCA5A5), fontSize = 12.sp)
-            }
-            Button(
-                onClick = {
-                    val t = titleInput.trim()
-                    val v = videoInput.trim()
-                    if (t.length < 2) {
-                        formNotice = "Enter a series title."
-                        return@Button
-                    }
-                    if (!v.startsWith("https://") && !v.startsWith("http://")) {
-                        formNotice = "Enter a direct https:// .mp4 or .m3u8 stream URL."
-                        return@Button
-                    }
-                    val series = DramaSeries(
-                        id = "custom-${System.currentTimeMillis()}",
-                        title = t,
-                        provider = providerInput,
-                        genre = genreInput.trim().ifBlank { "Short Drama" },
-                        synopsis = "",
-                        posterUrl = posterInput.trim(),
-                        accentTop = Color(0xFF4C1D95),
-                        accentBottom = Color(0xFF09090B),
-                        episodes = listOf(DramaEpisode(1, "Episode 1", v)),
-                        isCustom = true
-                    )
-                    onAddCustomSeries(series)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+        if (visible && customView == null) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF14141D))
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Add to Discover")
+                IconButton(onClick = onClose) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
+                Text(
+                    "ReelFren Ad-Blocked Player",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { webViewRef?.reload() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reload", tint = Color.White)
+                }
+            }
+        }
+
+        Box(Modifier.fillMaxSize()) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    WebView(context).apply {
+                        val ua = configureWebView(this, autoplayMedia = true)
+                        onUserAgentReady(ua)
+                        webChromeClient = buildAntiPopupChromeClient(
+                            onShowCustom = { view, cb ->
+                                if (view != null) {
+                                    customCallback?.onCustomViewHidden()
+                                    customView = view
+                                    customCallback = cb
+                                }
+                            },
+                            onHideCustom = {
+                                customView = null
+                                customCallback = null
+                            }
+                        )
+                        addJavascriptInterface(
+                            StreamResolverBridge(
+                                onVerification = { latestOnVerify() },
+                                onEpisodes = { eps -> latestOnEpisodes(eps) },
+                                onStreamUrl = { stream, page -> latestOnStream(stream, page) }
+                            ),
+                            "DramaStreamBridge"
+                        )
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView,
+                                request: WebResourceRequest
+                            ): WebResourceResponse? {
+                                val reqUrl = request.url.toString()
+                                if (isBlockedAdUri(request.url)) {
+                                    return emptyBlockedResponse()
+                                }
+                                if (isVideoStreamUrl(reqUrl)) {
+                                    val currentPage = view.url ?: targetUrl
+                                    Handler(Looper.getMainLooper()).post {
+                                        latestOnStream(reqUrl, currentPage)
+                                    }
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest
+                            ): Boolean {
+                                val target = request.url
+                                val scheme = target.scheme?.lowercase()
+                                if (scheme != "http" && scheme != "https") return true
+                                if (isBlockedAdUri(target)) return true
+                                if (request.isForMainFrame && !isAllowedMainFrame(target.toString())) return true
+                                return false
+                            }
+
+                            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                                super.onPageStarted(view, url, favicon)
+                                view.evaluateJavascript(POPUP_SHIELD_JS, null)
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String) {
+                                super.onPageFinished(view, url)
+                                view.evaluateJavascript(POPUP_SHIELD_JS, null)
+                                if (!isReelFrenHost(url)) return
+                                val extractJs = """
+                                    (function() {
+                                      const title = (document.title || '').toLowerCase();
+                                      if (title.indexOf('just a moment') !== -1 ||
+                                          document.querySelector('#challenge-running, #challenge-form, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]')) {
+                                        window.DramaStreamBridge.onVerificationRequired();
+                                        return;
+                                      }
+                                      if (!window.__dpMediaHooked) {
+                                        window.__dpMediaHooked = true;
+                                        const reportIfMedia = function(u) {
+                                          if (typeof u === 'string' && (u.indexOf('.m3u8') !== -1 || u.indexOf('.mp4') !== -1 || u.indexOf('.mpd') !== -1)) {
+                                            try {
+                                              window.DramaStreamBridge.onStreamFound(new URL(u, location.href).href, location.href);
+                                            } catch (_) {}
+                                          }
+                                        };
+                                        const origFetch = window.fetch;
+                                        if (origFetch) {
+                                          window.fetch = function() {
+                                            try { reportIfMedia(typeof arguments[0] === 'string' ? arguments[0] : (arguments[0] && arguments[0].url)); } catch (_) {}
+                                            return origFetch.apply(this, arguments);
+                                          };
+                                        }
+                                        const origOpen = XMLHttpRequest.prototype.open;
+                                        XMLHttpRequest.prototype.open = function(m, u) {
+                                          try { reportIfMedia(u); } catch (_) {}
+                                          return origOpen.apply(this, arguments);
+                                        };
+                                      }
+                                      const scan = function() {
+                                        try {
+                                          const videos = Array.from(document.querySelectorAll('video, video source'));
+                                          for (const el of videos) {
+                                            const src = el.currentSrc || el.src || el.getAttribute('src') || '';
+                                            if (src && !src.startsWith('blob:') && src.startsWith('http')) {
+                                              window.DramaStreamBridge.onStreamFound(src, location.href);
+                                            }
+                                            if (el.tagName === 'VIDEO' && !window.__dpKeepWebAudio) {
+                                              el.muted = true;
+                                              el.pause();
+                                            }
+                                          }
+                                          const baseNoHash = location.href.split('#')[0];
+                                          const epAnchors = Array.from(document.querySelectorAll('a[href*="ep"], a[href*="episode"], [class*="episode"] a'));
+                                          const seen = new Set();
+                                          const eps = [];
+                                          epAnchors.forEach(function(a, idx) {
+                                            const raw = a.getAttribute('href');
+                                            if (!raw || raw.startsWith('#')) return;
+                                            const href = new URL(raw, location.href).href;
+                                            if (!href.includes('reelfren.net') || seen.has(href)) return;
+                                            seen.add(href);
+                                            const txt = (a.innerText || a.getAttribute('title') || '').trim().replace(/\s+/g, ' ');
+                                            eps.push({ number: idx + 1, title: txt || ('Episode ' + (idx + 1)), url: href });
+                                          });
+                                          if (eps.length === 0) {
+                                            const btns = Array.from(document.querySelectorAll('[class*="episode"] button, button[data-episode], button[data-ep]'));
+                                            if (btns.length > 1) {
+                                              window.__dpEpButtons = btns;
+                                              window.__dpClickEpisode = function(i) {
+                                                try {
+                                                  document.querySelectorAll('video').forEach(function(v) { v.pause(); v.removeAttribute('src'); });
+                                                  if (window.__dpEpButtons && window.__dpEpButtons[i]) {
+                                                    window.__dpEpButtons[i].click();
+                                                  }
+                                                } catch (_) {}
+                                              };
+                                              btns.forEach(function(b, idx) {
+                                                const txt = (b.innerText || '').trim().replace(/\s+/g, ' ');
+                                                eps.push({ number: idx + 1, title: txt || ('Episode ' + (idx + 1)), url: baseNoHash + '#dp-ep-' + (idx + 1) });
+                                              });
+                                            }
+                                          }
+                                          if (eps.length > 0) {
+                                            window.DramaStreamBridge.onEpisodesFound(JSON.stringify(eps));
+                                          }
+                                        } catch (_) {}
+                                      };
+                                      scan();
+                                      if (window.__dpScanTimer) clearInterval(window.__dpScanTimer);
+                                      let ticks = 0;
+                                      window.__dpScanTimer = setInterval(function() {
+                                        ticks++;
+                                        scan();
+                                        if (ticks >= 20) clearInterval(window.__dpScanTimer);
+                                      }, 600);
+                                    })();
+                                """.trimIndent()
+                                view.evaluateJavascript(extractJs, null)
+                                if (visible) {
+                                    view.evaluateJavascript("window.__dpKeepWebAudio = true;", null)
+                                }
+                            }
+                        }
+                        webViewRef = this
+                        loadUrl(targetUrl)
+                    }
+                },
+                update = { view ->
+                    view.evaluateJavascript("window.__dpKeepWebAudio = ${if (visible) "true" else "false"};", null)
+                    val epMarker = "#dp-ep-"
+                    val markerIdx = targetUrl.indexOf(epMarker)
+                    if (markerIdx != -1) {
+                        val epNum = targetUrl.substring(markerIdx + epMarker.length).toIntOrNull()
+                        if (epNum != null && epNum >= 1) {
+                            view.evaluateJavascript("window.__dpClickEpisode && window.__dpClickEpisode(${epNum - 1});", null)
+                        }
+                    } else if (view.url != targetUrl) {
+                        view.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause();v.removeAttribute('src');});", null)
+                        view.loadUrl(targetUrl)
+                    }
+                }
+            )
+
+            val fsView = customView
+            if (fsView != null) {
+                key(fsView) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            FrameLayout(ctx).apply {
+                                (fsView.parent as? ViewGroup)?.removeView(fsView)
+                                addView(
+                                    fsView,
+                                    FrameLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                )
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -1098,27 +1679,46 @@ private fun SourcesScreen(
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun VerticalDramaPlayer(
-    drama: DramaSeries,
-    initialEpisodeIndex: Int,
+private fun NativeVerticalDramaPlayer(
+    dramaTitle: String,
+    provider: String,
+    episodes: List<ResolvedEpisode>,
+    resolvedStreams: Map<String, String>,
+    activeIndex: Int,
+    userAgent: String,
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
-    onEpisodeChanged: (Int) -> Unit,
+    onSelectEpisode: (Int) -> Unit,
+    onOpenAdFreeWebFallback: () -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val episodes = drama.episodes
     val pagerState = rememberPagerState(
-        initialPage = initialEpisodeIndex.coerceIn(0, (episodes.size - 1).coerceAtLeast(0)),
+        initialPage = activeIndex.coerceIn(0, (episodes.size - 1).coerceAtLeast(0)),
         pageCount = { episodes.size }
     )
 
-    val exoPlayer = remember(context) {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_OFF
-            playWhenReady = true
+    val exoPlayer = remember(context, userAgent) {
+        val cookieHeader = CookieManager.getInstance().getCookie(CATALOG_URL).orEmpty()
+        val headers = buildMap {
+            put("Referer", CATALOG_URL)
+            put("Origin", "https://reelfren.net")
+            if (cookieHeader.isNotBlank()) put("Cookie", cookieHeader)
         }
+        val factory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(headers)
+            .apply {
+                if (userAgent.isNotBlank()) setUserAgent(userAgent)
+            }
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
+            .build()
+            .apply {
+                repeatMode = Player.REPEAT_MODE_OFF
+                playWhenReady = true
+            }
     }
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -1127,13 +1727,35 @@ private fun VerticalDramaPlayer(
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var showEpisodeSheet by remember { mutableStateOf(false) }
-    var showControls by remember { mutableStateOf(true) }
 
     BackHandler {
-        if (showEpisodeSheet) {
-            showEpisodeSheet = false
+        if (showEpisodeSheet) showEpisodeSheet = false else onClose()
+    }
+
+    LaunchedEffect(activeIndex) {
+        if (pagerState.currentPage != activeIndex && activeIndex in episodes.indices) {
+            pagerState.scrollToPage(activeIndex)
+        }
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        if (pagerState.currentPage != activeIndex) {
+            onSelectEpisode(pagerState.currentPage)
+        }
+    }
+
+    val currentEp = episodes.getOrNull(pagerState.currentPage)
+    val streamUrl = currentEp?.let { resolvedStreams[it.pageUrl] }
+
+    LaunchedEffect(streamUrl, pagerState.currentPage) {
+        if (!streamUrl.isNullOrBlank()) {
+            exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+            exoPlayer.volume = if (isMuted) 0f else 1f
+            exoPlayer.playbackParameters = PlaybackParameters(speed)
         } else {
-            onClose()
+            exoPlayer.stop()
         }
     }
 
@@ -1151,22 +1773,16 @@ private fun VerticalDramaPlayer(
                     }
                 }
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                onOpenAdFreeWebFallback()
+            }
         }
         exoPlayer.addListener(listener)
         onDispose {
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
-    }
-
-    LaunchedEffect(pagerState.currentPage, drama.id) {
-        val ep = episodes.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        onEpisodeChanged(pagerState.currentPage)
-        exoPlayer.setMediaItem(MediaItem.fromUri(ep.videoUrl))
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
-        exoPlayer.volume = if (isMuted) 0f else 1f
-        exoPlayer.playbackParameters = PlaybackParameters(speed)
     }
 
     LaunchedEffect(exoPlayer) {
@@ -1177,17 +1793,14 @@ private fun VerticalDramaPlayer(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val ep = episodes[page]
             val isCurrent = page == pagerState.currentPage
+            val pageStream = resolvedStreams[ep.pageUrl]
 
             Box(
                 modifier = Modifier
@@ -1197,17 +1810,12 @@ private fun VerticalDramaPlayer(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        if (isCurrent) {
-                            if (exoPlayer.isPlaying) {
-                                exoPlayer.pause()
-                                showControls = true
-                            } else {
-                                exoPlayer.play()
-                            }
+                        if (isCurrent && !pageStream.isNullOrBlank()) {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                         }
                     }
             ) {
-                if (isCurrent) {
+                if (isCurrent && !pageStream.isNullOrBlank()) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
@@ -1218,32 +1826,27 @@ private fun VerticalDramaPlayer(
                             }
                         },
                         update = { view ->
-                            if (view.player !== exoPlayer) {
-                                view.player = exoPlayer
-                            }
+                            if (view.player !== exoPlayer) view.player = exoPlayer
                         }
                     )
                 } else {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Brush.verticalGradient(listOf(drama.accentTop, drama.accentBottom))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "Episode ${ep.number}: ${ep.title}",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = Color(0xFFFF3D71))
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "Loading ${ep.title}…",
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
 
-                // Bottom gradient scrim for legible native controls
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(240.dp)
+                        .height(230.dp)
                         .align(Alignment.BottomCenter)
                         .background(
                             Brush.verticalGradient(
@@ -1252,7 +1855,7 @@ private fun VerticalDramaPlayer(
                         )
                 )
 
-                if (isCurrent && !isPlaying) {
+                if (isCurrent && !pageStream.isNullOrBlank() && !isPlaying) {
                     Box(
                         modifier = Modifier
                             .size(68.dp)
@@ -1277,9 +1880,7 @@ private fun VerticalDramaPlayer(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
-                    )
+                    Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent))
                 )
                 .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -1290,23 +1891,22 @@ private fun VerticalDramaPlayer(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = drama.title,
+                    text = dramaTitle,
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val currentEp = episodes.getOrNull(pagerState.currentPage)
                 Text(
-                    text = "${drama.provider} · Ep ${currentEp?.number ?: 1} / ${episodes.size}",
+                    text = "$provider · Ep ${currentEp?.number ?: 1} / ${episodes.size}",
                     color = Color(0xFFD4D4D8),
                     fontSize = 12.sp
                 )
             }
         }
 
-        // Right-side vertical action rail
+        // Right Action Rail
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -1349,71 +1949,66 @@ private fun VerticalDramaPlayer(
             )
         }
 
-        // Bottom Episode Info + Seek Bar
-        if (showControls) {
-            val currentEp = episodes.getOrNull(pagerState.currentPage)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 14.dp)
+        // Bottom Controls
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = 14.dp)
+        ) {
+            Text(
+                text = "Ep ${currentEp?.number ?: 1} · ${currentEp?.title.orEmpty()}",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(end = 68.dp)
+            )
+            Text(
+                text = "Swipe up for next episode",
+                color = Color(0xFFA1A1AA),
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Ep ${currentEp?.number ?: 1} · ${currentEp?.title.orEmpty()}",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(end = 68.dp)
-                )
-                Text(
-                    text = "Swipe up for next episode",
-                    color = Color(0xFFA1A1AA),
-                    fontSize = 12.sp
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                IconButton(
+                    onClick = {
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                    },
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    IconButton(
-                        onClick = {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                        },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play or pause",
-                            tint = Color.White
-                        )
-                    }
-                    Slider(
-                        value = if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f,
-                        onValueChange = { fraction ->
-                            if (durationMs > 0L) {
-                                exoPlayer.seekTo((fraction * durationMs).toLong())
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color(0xFFFF3D71),
-                            activeTrackColor = Color(0xFFFF3D71),
-                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                        )
-                    )
-                    Text(
-                        text = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}",
-                        color = Color(0xFFE4E4E7),
-                        fontSize = 11.sp
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = "Play or pause",
+                        tint = Color.White
                     )
                 }
+                Slider(
+                    value = if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f,
+                    onValueChange = { fraction ->
+                        if (durationMs > 0L) exoPlayer.seekTo((fraction * durationMs).toLong())
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFFFF3D71),
+                        activeTrackColor = Color(0xFFFF3D71),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                    )
+                )
+                Text(
+                    text = "${formatDuration(positionMs)} / ${formatDuration(durationMs)}",
+                    color = Color(0xFFE4E4E7),
+                    fontSize = 11.sp
+                )
             }
         }
 
-        // Slide-up Episode Drawer
+        // Episodes Drawer
         AnimatedVisibility(
             visible = showEpisodeSheet,
             enter = fadeIn() + slideInVertically { it },
