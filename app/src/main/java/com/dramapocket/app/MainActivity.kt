@@ -1102,7 +1102,12 @@ private fun CatalogWebLoader(
                               if (window.__dpTimer) clearInterval(window.__dpTimer);
                               let attempts = 0;
                               let verificationNotified = false;
-                              const knownProviders = ['Melolo', 'DramaBox', 'ReelShort', 'ShortMax', 'FlexTV', 'NetShort', 'Vigloo', 'WeTV', 'GoodShort', 'MoboReels', 'Kalos'];
+                              const knownProviders = [
+                                'Melolo', 'DramaBox', 'DramaWave', 'ReelShort', 'ShortMax',
+                                'FlexTV', 'NetShort', 'Vigloo', 'WeTV', 'GoodShort',
+                                'MoboReels', 'Kalos', 'Sereal+', 'iQIYI', 'PineDrama',
+                                'ShortTV', 'StardustTV', 'MiniDrama', 'TopShort'
+                              ];
                               const detectProvider = function(text, href) {
                                 const hay = (text + ' ' + href).toLowerCase();
                                 for (const p of knownProviders) {
@@ -1110,82 +1115,139 @@ private fun CatalogWebLoader(
                                 }
                                 return 'ReelFren';
                               };
+                              const stateKey = '__dp_reelfren_catalog_crawl_v2';
+                              let crawl;
+                              try {
+                                crawl = JSON.parse(sessionStorage.getItem(stateKey) || 'null');
+                              } catch (_) { crawl = null; }
+                              if (!crawl || !Array.isArray(crawl.items) || !Array.isArray(crawl.visited)) {
+                                crawl = { items: [], seen: [], visited: [], pages: 0 };
+                              }
                               const isChallenge = function() {
                                 const title = (document.title || '').toLowerCase();
                                 return title.indexOf('just a moment') !== -1 ||
                                   !!document.querySelector('#challenge-running, #challenge-form, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
                               };
                               const collect = function() {
+                                if (isChallenge()) {
+                                  window.DramaPocketBridge.onVerificationRequired();
+                                  return false;
+                                }
                                 try {
-                                  if (isChallenge()) {
-                                    if (!verificationNotified) {
-                                      verificationNotified = true;
-                                      window.DramaPocketBridge.onVerificationRequired();
-                                    }
-                                    return false;
-                                  }
-                                  const preferred = Array.from(document.querySelectorAll('a[href*="/drama/"], a[href*="/series/"], a[href*="/watch/"]'));
+                                  const preferred = Array.from(document.querySelectorAll(
+                                    'a[href*="/drama/"], a[href*="/series/"], a[href*="/watch/"]'
+                                  ));
                                   const fallback = preferred.length > 0
                                     ? preferred
-                                    : Array.from(document.querySelectorAll('a[href]')).filter(function(a) { return !!a.querySelector('img'); });
-                                  const blocked = ['/genre', '/tag', '/login', '/register', '/search', '/privacy', '/terms', '/about', '/contact', '/language'];
-                                  const seen = new Set();
-                                  const cards = [];
+                                    : Array.from(document.querySelectorAll('a[href]')).filter(function(a) {
+                                        return !!a.querySelector('img');
+                                      });
+                                  const blocked = ['/genre', '/tag', '/login', '/register', '/search',
+                                    '/privacy', '/terms', '/about', '/contact', '/language', '/category'];
                                   for (const a of fallback) {
                                     const raw = a.getAttribute('href');
                                     if (!raw || raw.startsWith('#') || raw.startsWith('javascript:')) continue;
-                                    const href = new URL(raw, location.href).href;
-                                    const parsedUrl = new URL(href);
-                                    if (!parsedUrl.hostname.endsWith('reelfren.net')) continue;
-                                    if (parsedUrl.pathname === '/' || blocked.some(function(p) { return parsedUrl.pathname.startsWith(p); })) continue;
+                                    const parsedUrl = new URL(raw, location.href);
+                                    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') continue;
+                                    if (!(parsedUrl.hostname === 'reelfren.net' || parsedUrl.hostname.endsWith('.reelfren.net'))) continue;
+                                    if (parsedUrl.pathname === '/' || blocked.some(function(x) { return parsedUrl.pathname.startsWith(x); })) continue;
                                     const img = a.querySelector('img');
                                     const titleEl = a.querySelector('h1, h2, h3, h4, [class*="title"], [class*="name"]');
-                                    const cardText = ((a.closest('article, li, div') || a).innerText || '');
-                                    const title = (
-                                      a.getAttribute('title') ||
+                                    const card = a.closest('article, li, [class*="item"], [class*="card"]') || a;
+                                    const cardText = card.innerText || a.innerText || '';
+                                    const title = (a.getAttribute('title') ||
                                       (titleEl && titleEl.innerText) ||
                                       (img && (img.getAttribute('alt') || img.getAttribute('title'))) ||
-                                      a.innerText ||
-                                      ''
-                                    ).trim().replace(/\s+/g, ' ');
-                                    const image = img ? (
-                                      img.currentSrc || img.src || img.getAttribute('data-src') ||
-                                      img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || ''
-                                    ) : '';
-                                    if (title.length > 2 && !seen.has(href)) {
-                                      seen.add(href);
-                                      cards.push({
-                                        title: title,
-                                        url: href,
-                                        image: image,
+                                      a.innerText || '').trim().replace(/\\s+/g, ' ');
+                                    const image = img ? (img.currentSrc || img.src ||
+                                      img.getAttribute('data-src') || img.getAttribute('data-lazy-src') ||
+                                      img.getAttribute('data-original') || '') : '';
+                                    const href = parsedUrl.href.split('#')[0];
+                                    if (title.length > 2 && !crawl.seen.includes(href)) {
+                                      crawl.seen.push(href);
+                                      crawl.items.push({
+                                        title: title, url: href, image: image,
                                         provider: detectProvider(cardText, href)
                                       });
                                     }
                                   }
-                                  if (cards.length > 0) {
-                                    window.DramaPocketBridge.onCatalog(JSON.stringify(cards));
-                                    return true;
-                                  }
-                                  return false;
-                                } catch (e) {
-                                  window.DramaPocketBridge.onFailure('Could not read ReelFren catalog: ' + e.message);
                                   return true;
+                                } catch (e) {
+                                  window.DramaPocketBridge.onFailure('Catalog scan failed: ' + e.message);
+                                  return false;
                                 }
                               };
-                              if (collect()) return;
-                              const maxAttempts = ${if (sawHttp403) 45 else 25};
-                              window.__dpTimer = setInterval(function() {
-                                attempts++;
-                                if (collect()) {
-                                  clearInterval(window.__dpTimer);
-                                  return;
+                              const saveCrawl = function() {
+                                try { sessionStorage.setItem(stateKey, JSON.stringify(crawl)); } catch (_) {}
+                              };
+                              const nextPage = function() {
+                                const links = Array.from(document.querySelectorAll('a[href]'));
+                                const candidates = links.filter(function(a) {
+                                  const label = ((a.innerText || '') + ' ' +
+                                    (a.getAttribute('aria-label') || '') + ' ' +
+                                    (a.getAttribute('title') || '')).trim().toLowerCase();
+                                  const rel = (a.getAttribute('rel') || '').toLowerCase();
+                                  return rel.split(/\\s+/).includes('next') ||
+                                    /^(next|older|›|»|→|下一页)$/.test(label);
+                                });
+                                for (const a of candidates) {
+                                  try {
+                                    const u = new URL(a.href, location.href);
+                                    if ((u.hostname === 'reelfren.net' || u.hostname.endsWith('.reelfren.net')) &&
+                                        u.origin === location.origin && !crawl.visited.includes(u.href)) return u.href;
+                                  } catch (_) {}
                                 }
-                                if (attempts >= maxAttempts && !verificationNotified) {
-                                  clearInterval(window.__dpTimer);
-                                  window.DramaPocketBridge.onFailure('ReelFren did not return drama listings. Tap Try again.');
-                                }
-                              }, 1000);
-                            })();
+                                return '';
+                              };
+                              const current = location.href.split('#')[0];
+                              if (!crawl.visited.includes(current)) {
+                                crawl.visited.push(current);
+                                crawl.pages++;
+                              }
+                              let stablePasses = 0;
+                              let scrollPasses = 0;
+                              const crawlStep = function() {
+                                if (!collect()) return;
+                                scrollPasses++;
+                                const oldHeight = document.documentElement.scrollHeight;
+                                window.scrollTo(0, document.documentElement.scrollHeight);
+                                setTimeout(function() {
+                                  if (!collect()) return;
+                                  const newHeight = document.documentElement.scrollHeight;
+                                  if (newHeight > oldHeight + 20) {
+                                    stablePasses = 0;
+                                  } else {
+                                    stablePasses++;
+                                  }
+                                  const loadMore = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+                                    .find(function(el) {
+                                      const t = (el.innerText || '').trim().toLowerCase();
+                                      return /^(load more|show more|view more)$/.test(t) && el.offsetParent !== null;
+                                    });
+                                  if (loadMore && stablePasses >= 1 && scrollPasses < 12) {
+                                    loadMore.click();
+                                    stablePasses = 0;
+                                  }
+                                  if (stablePasses < 3 && scrollPasses < 12) {
+                                    crawlStep();
+                                    return;
+                                  }
+                                  const next = nextPage();
+                                  if (next && crawl.pages < 80) {
+                                    saveCrawl();
+                                    location.href = next;
+                                    return;
+                                  }
+                                  saveCrawl();
+                                  try { sessionStorage.removeItem(stateKey); } catch (_) {}
+                                  if (crawl.items.length > 0) {
+                                    window.DramaPocketBridge.onCatalog(JSON.stringify(crawl.items));
+                                  } else {
+                                    window.DramaPocketBridge.onFailure('ReelFren loaded, but no drama cards were detected.');
+                                  }
+                                }, 700);
+                              };
+                              crawlStep();                            })();
                         """.trimIndent()
                         view.evaluateJavascript(script, null)
                     }
