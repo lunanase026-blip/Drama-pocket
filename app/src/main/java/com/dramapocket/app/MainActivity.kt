@@ -1158,7 +1158,7 @@ private fun CatalogWebLoader(
                                     const title = (a.getAttribute('title') ||
                                       (titleEl && titleEl.innerText) ||
                                       (img && (img.getAttribute('alt') || img.getAttribute('title'))) ||
-                                      a.innerText || '').trim().replace(/\\s+/g, ' ');
+                                      a.innerText || '').trim().replace(/\s+/g, ' ');
                                     const image = img ? (img.currentSrc || img.src ||
                                       img.getAttribute('data-src') || img.getAttribute('data-lazy-src') ||
                                       img.getAttribute('data-original') || '') : '';
@@ -1187,7 +1187,7 @@ private fun CatalogWebLoader(
                                     (a.getAttribute('aria-label') || '') + ' ' +
                                     (a.getAttribute('title') || '')).trim().toLowerCase();
                                   const rel = (a.getAttribute('rel') || '').toLowerCase();
-                                  return rel.split(/\\s+/).includes('next') ||
+                                  return rel.split(/\s+/).includes('next') ||
                                     /^(next|older|›|»|→|下一页)$/.test(label);
                                 });
                                 for (const a of candidates) {
