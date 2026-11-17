@@ -343,7 +343,44 @@ private fun DramaWebPlayer(url: String, modifier: Modifier = Modifier) {
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = true
                 webChromeClient = WebChromeClient()
-                webViewClient = WebViewClient()
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView,
+                        request: WebResourceRequest
+                    ): Boolean {
+                        val target = request.url
+                        val scheme = target.scheme?.lowercase()
+                        if (scheme == "http" || scheme == "https") return false
+
+                        // Partner deep links (for example shopeeph://) must be
+                        // handed to Android, not loaded as a WebView page.
+                        return try {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                target
+                            )
+                            context.startActivity(intent)
+                            true
+                        } catch (_: Exception) {
+                            val fallback = target.getQueryParameter("navigate_url")
+                            if (!fallback.isNullOrBlank() &&
+                                (fallback.startsWith("https://") || fallback.startsWith("http://"))
+                            ) {
+                                try {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(fallback)
+                                        )
+                                    )
+                                } catch (_: Exception) {
+                                    // Keep the player open if no app can handle the link.
+                                }
+                            }
+                            true
+                        }
+                    }
+                }
                 loadUrl(url)
             }
         },
