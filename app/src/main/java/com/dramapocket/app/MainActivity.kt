@@ -158,7 +158,7 @@ private fun DramaPocketApp() {
                     // only the visible drama-card metadata to the native Compose interface.
                     key(reloadKey) {
                         CatalogWebLoader(
-                            modifier = Modifier.size(1.dp),
+                            modifier = if (error != null) Modifier.fillMaxSize() else Modifier.size(1.dp),
                             onResult = { result ->
                                 loading = false
                                 if (result.first.isNotEmpty()) {
@@ -274,24 +274,53 @@ private fun CatalogWebLoader(
                         if (!url.startsWith(CATALOG_URL)) return
                         val script = """
                             (function() {
-                              try {
-                                const links = Array.from(document.querySelectorAll('a[href*="/drama/"]'));
-                                const seen = new Set();
-                                const cards = [];
-                                for (const a of links) {
-                                  const href = new URL(a.getAttribute('href'), location.href).href;
-                                  const img = a.querySelector('img');
-                                  const title = (a.getAttribute('title') || (img && img.getAttribute('alt')) || a.innerText || '').trim().replace(/\s+/g, ' ');
-                                  const image = img ? (img.currentSrc || img.src || img.getAttribute('data-src') || '') : '';
-                                  if (href.startsWith('https://reelfren.net/') && title.length > 2 && !seen.has(href)) {
-                                    seen.add(href);
-                                    cards.push({title: title, url: href, image: image, description: ''});
+                              // Wait for the site's normal client-side rendering to finish.
+                              // If ReelFren presents a human verification page, this WebView
+                              // becomes visible so the user can complete it manually.
+                              let attempts = 0;
+                              const collect = function() {
+                                try {
+                                  const links = Array.from(document.querySelectorAll('a[href*="/drama/"]'));
+                                  const seen = new Set();
+                                  const cards = [];
+                                  for (const a of links) {
+                                    const raw = a.getAttribute('href');
+                                    if (!raw) continue;
+                                    const href = new URL(raw, location.href).href;
+                                    const img = a.querySelector('img');
+                                    const title = (a.getAttribute('title') ||
+                                      (img && (img.getAttribute('alt') || img.getAttribute('title'))) ||
+                                      a.innerText || '').trim().replace(/\\s+/g, ' ');
+                                    const image = img ? (img.currentSrc || img.src ||
+                                      img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '') : '';
+                                    if (href.startsWith('https://reelfren.net/drama/') &&
+                                        title.length > 2 && !seen.has(href)) {
+                                      seen.add(href);
+                                      cards.push({title: title, url: href, image: image, description: ''});
+                                    }
+                                  }
+                                  if (cards.length > 0) {
+                                    window.DramaPocketBridge.onCatalog(JSON.stringify(cards));
+                                    return true;
+                                  }
+                                  return false;
+                                } catch (e) {
+                                  window.DramaPocketBridge.onFailure('Could not read the ReelFren catalog page: ' + e.message);
+                                  return true;
+                                }
+                              };
+                              if (collect()) return;
+                              const timer = setInterval(function() {
+                                attempts++;
+                                if (collect() || attempts >= 30) {
+                                  clearInterval(timer);
+                                  if (attempts >= 30) {
+                                    window.DramaPocketBridge.onFailure(
+                                      'No drama cards appeared. If ReelFren shows a human verification page, complete it in this browser view, then tap Refresh catalog.'
+                                    );
                                   }
                                 }
-                                window.DramaPocketBridge.onCatalog(JSON.stringify(cards));
-                              } catch (e) {
-                                window.DramaPocketBridge.onFailure('Could not read the ReelFren catalog page: ' + e.message);
-                              }
+                              }, 1000);
                             })();
                         """.trimIndent()
                         view.evaluateJavascript(script, null)
