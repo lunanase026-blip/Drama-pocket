@@ -88,12 +88,20 @@ private const val KEY_PROGRESS_PREFIX = "ep_progress_"
 private val PROVIDERS = listOf(
     "All",
     "Melolo",
+    "Sereal+",
     "DramaBox",
     "ReelShort",
+    "DramaWave",
+    "NetShort",
     "ShortMax",
     "FlexTV",
-    "NetShort",
-    "Vigloo"
+    "Vigloo",
+    "PineDrama",
+    "MoboReels",
+    "WeTV",
+    "iQIYI",
+    "FreeReels",
+    "MovieBox Shorts"
 )
 
 data class DramaEpisode(
@@ -121,108 +129,7 @@ private enum class AppTab {
     SOURCES
 }
 
-private val STARTER_CATALOG = listOf(
-    DramaSeries(
-        id = "melolo-midnight-contract",
-        title = "Midnight Contract with the Heir",
-        provider = "Melolo",
-        genre = "Romance · CEO",
-        synopsis = "Forced into a 90-day marriage contract, a young architect uncovers who really owns her studio.",
-        posterUrl = "",
-        accentTop = Color(0xFF4C1D95),
-        accentBottom = Color(0xFF0F172A),
-        episodes = listOf(
-            DramaEpisode(1, "The Rainy Proposal", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
-            DramaEpisode(2, "Penthouse Rules", "https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4"),
-            DramaEpisode(3, "Hidden Ring", "https://media.w3.org/2010/05/sintel/trailer.mp4")
-        )
-    ),
-    DramaSeries(
-        id = "dramabox-rebirth-heiress",
-        title = "Rebirth of the Silent Heiress",
-        provider = "DramaBox",
-        genre = "Revenge · Second Chance",
-        synopsis = "After losing everything on her wedding night, she wakes up three years earlier ready to reclaim her name.",
-        posterUrl = "",
-        accentTop = Color(0xFF831843),
-        accentBottom = Color(0xFF1E1B4B),
-        episodes = listOf(
-            DramaEpisode(1, "Back to 2023", "https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4"),
-            DramaEpisode(2, "The Boardroom Trap", "https://media.w3.org/2010/05/bunny/trailer.mp4"),
-            DramaEpisode(3, "Signed in Red", "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")
-        )
-    ),
-    DramaSeries(
-        id = "reelshort-billionaire-driver",
-        title = "My Secret Billionaire Driver",
-        provider = "ReelShort",
-        genre = "Hidden Identity · Drama",
-        synopsis = "He drives a battered sedan by day while quietly buying out every rival trying to ruin her family.",
-        posterUrl = "",
-        accentTop = Color(0xFF1E3A8A),
-        accentBottom = Color(0xFF09090B),
-        episodes = listOf(
-            DramaEpisode(1, "Late Night Pickup", "https://media.w3.org/2010/05/sintel/trailer.mp4"),
-            DramaEpisode(2, "VIP Gala Shock", "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8")
-        )
-    ),
-    DramaSeries(
-        id = "shortmax-crimson-empress",
-        title = "Crimson Lantern in the West Palace",
-        provider = "ShortMax",
-        genre = "Historical · Intrigue",
-        synopsis = "A dismissed court physician decodes a royal poison plot before the autumn banquet begins.",
-        posterUrl = "",
-        accentTop = Color(0xFF7F1D1D),
-        accentBottom = Color(0xFF18181B),
-        episodes = listOf(
-            DramaEpisode(1, "West Gate Arrival", "https://media.w3.org/2010/05/bunny/trailer.mp4"),
-            DramaEpisode(2, "Jade Seal Mystery", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8")
-        )
-    ),
-    DramaSeries(
-        id = "flextv-campus-promise",
-        title = "Seven Springs Under Sakura",
-        provider = "FlexTV",
-        genre = "Youth · Romance",
-        synopsis = "Two rivals sharing a university film lab discover an unsigned script written about their past.",
-        posterUrl = "",
-        accentTop = Color(0xFF0F766E),
-        accentBottom = Color(0xFF111827),
-        episodes = listOf(
-            DramaEpisode(1, "First Take", "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"),
-            DramaEpisode(2, "Golden Hour Cut", "https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4")
-        )
-    ),
-    DramaSeries(
-        id = "netshort-last-witness",
-        title = "The Last Witness at Pier 9",
-        provider = "NetShort",
-        genre = "Thriller · Mystery",
-        synopsis = "A forensic audio analyst finds a buried voice memo pointing straight to the city prosecutor.",
-        posterUrl = "",
-        accentTop = Color(0xFF312E81),
-        accentBottom = Color(0xFF09090B),
-        episodes = listOf(
-            DramaEpisode(1, "Static on Track 4", "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8"),
-            DramaEpisode(2, "Pier 9 Rain", "https://media.w3.org/2010/05/sintel/trailer.mp4")
-        )
-    ),
-    DramaSeries(
-        id = "vigloo-substitute-bride",
-        title = "Substitute Bride's Counterattack",
-        provider = "Vigloo",
-        genre = "Family · Revenge",
-        synopsis = "Sent in place of her stepsister, she turns the cold family dinner into a live corporate takeover.",
-        posterUrl = "",
-        accentTop = Color(0xFF701A75),
-        accentBottom = Color(0xFF0F172A),
-        episodes = listOf(
-            DramaEpisode(1, "The Wrong Veil", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
-            DramaEpisode(2, "Shareholder Vote", "https://media.w3.org/2010/05/bunny/trailer.mp4")
-        )
-    )
-)
+private val STARTER_CATALOG = emptyList<DramaSeries>()
 
 private fun parseCatalogJson(raw: String, isCustom: Boolean): List<DramaSeries> {
     if (raw.isBlank()) return emptyList()
@@ -397,7 +304,7 @@ private fun DramaPocketApp() {
     var activeStartEpisode by remember { mutableIntStateOf(0) }
 
     val allCatalog = remember(remoteCatalog, customSeries) {
-        val base = if (remoteCatalog.isNotEmpty()) remoteCatalog else STARTER_CATALOG
+        val base = remoteCatalog
         (customSeries + base).distinctBy { it.id }
     }
 
@@ -440,7 +347,7 @@ private fun DramaPocketApp() {
             result.onSuccess { list ->
                 remoteCatalog = list
                 prefs.edit().putString(KEY_REMOTE_CATALOG, serializeCatalogJson(list)).apply()
-                syncMessage = "Loaded ${list.size} series cleanly with zero ads."
+                syncMessage = "Loaded ${list.size} playable series."
                 activeTab = AppTab.DISCOVER
             }.onFailure { err ->
                 syncMessage = err.message ?: "Failed to load JSON feed."
@@ -528,7 +435,7 @@ private fun DramaPocketApp() {
                         onResetToStarter = {
                             remoteCatalog = emptyList()
                             prefs.edit().remove(KEY_REMOTE_CATALOG).apply()
-                            syncMessage = "Switched back to built-in starter catalog."
+                            syncMessage = "Remote catalog cleared. No sample videos are included."
                         },
                         onAddCustomSeries = { newSeries ->
                             addCustomSeries(newSeries)
@@ -591,7 +498,7 @@ private fun DiscoverScreen(
                             color = Color.White
                         )
                         Text(
-                            "Discover · Ad-free vertical player",
+                            "Native vertical player · No embedded webpages",
                             fontSize = 12.sp,
                             color = Color(0xFFA1A1AA)
                         )
@@ -666,7 +573,7 @@ private fun DiscoverScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "No dramas found in $selectedProvider.",
+                        if (catalog.isEmpty()) "No verified playable dramas yet. Add a permitted catalog feed in Sources." else "No dramas found in $selectedProvider.",
                         color = Color(0xFFA1A1AA),
                         fontSize = 14.sp
                     )
@@ -1021,7 +928,7 @@ private fun SourcesScreen(
                 color = Color.White
             )
             Text(
-                "Connect a clean JSON catalog or add MP4/HLS series directly — no WebView, no ads, no bot verification.",
+                "Connect a permitted JSON catalog containing direct MP4/HLS episode streams. DramaPocket uses its own native catalog and player; it does not display provider webpages.",
                 fontSize = 13.sp,
                 color = Color(0xFFA1A1AA)
             )
@@ -1064,7 +971,7 @@ private fun SourcesScreen(
                 }
                 if (hasRemoteCatalog) {
                     OutlinedButton(onClick = onResetToStarter) {
-                        Text("Use Starter", color = Color.White)
+                        Text("Clear Catalog", color = Color.White)
                     }
                 }
             }
