@@ -2,7 +2,11 @@ package com.dramapocket.app
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -16,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -28,12 +33,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.lifecycleScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.jsoup.Jsoup
+import org.json.JSONArray
 
 private const val CATALOG_URL = "https://reelfren.net/"
 
@@ -59,39 +64,8 @@ private fun DramaPocketApp() {
     var selectedUrl by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var favorites by remember { mutableStateOf(setOf<String>()) }
+    var reloadKey by remember { mutableIntStateOf(0) }
 
-    suspend fun refreshCatalog() {
-        loading = true
-        error = null
-        try {
-            dramas = withContext(Dispatchers.IO) {
-                val doc = Jsoup.connect(CATALOG_URL)
-                    .userAgent("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36")
-                    .timeout(20000)
-                    .get()
-                val found = linkedMapOf<String, Drama>()
-                doc.select("a[href*=/drama/]").forEach { a ->
-                    val href = a.absUrl("href")
-                    val title = (a.attr("title").ifBlank { a.text() }).trim()
-                    val img = a.selectFirst("img")
-                    val image = img?.let {
-                        it.absUrl("src").ifBlank { it.absUrl("data-src") }
-                    }.orEmpty()
-                    if (href.isNotBlank() && title.length > 2 && !found.containsKey(href)) {
-                        found[href] = Drama(title, href, image)
-                    }
-                }
-                found.values.toList()
-            }
-            if (dramas.isEmpty()) error = "The catalog returned no readable drama cards. The source website may have changed."
-        } catch (e: Exception) {
-            error = e.localizedMessage ?: "Unable to load the catalog."
-        } finally {
-            loading = false
-        }
-    }
-
-    LaunchedEffect(Unit) { refreshCatalog() }
     BackHandler(selectedUrl != null) { selectedUrl = null }
 
     MaterialTheme(colorScheme = lightColorScheme(
@@ -131,39 +105,70 @@ private fun DramaPocketApp() {
                     }
                 }
             ) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding).background(Color(0xFFFFFBFE))) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Discover", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { /* refreshed by pull/reopen in this starter */ }) { Text("Catalog") }
-                    }
-                    when {
-                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                        error != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(error!!, color = Color.DarkGray)
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = { /* activity recreation or later refresh control */ }) { Text("Try again") }
-                        }
-                        else -> LazyColumn(
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                Box(Modifier.fillMaxSize().padding(padding).background(Color(0xFFFFFBFE))) {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(dramas.filter { it.title.contains(search, ignoreCase = true) }) { drama ->
-                                DramaCard(
-                                    drama = drama,
-                                    favorite = favorites.contains(drama.url),
-                                    onFavorite = {
-                                        favorites = if (favorites.contains(drama.url)) favorites - drama.url else favorites + drama.url
-                                    },
-                                    onClick = { selectedUrl = drama.url }
-                                )
+                            Text("Discover", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            TextButton(onClick = {
+                                loading = true
+                                error = null
+                                reloadKey++
+                            }) { Text("Refresh catalog") }
+                        }
+                        when {
+                            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                                Text("Loading catalog…", modifier = Modifier.padding(top = 64.dp), color = Color.Gray)
+                            }
+                            error != null -> Column(
+                                Modifier.fillMaxWidth().padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(error!!, color = Color.DarkGray)
+                                Spacer(Modifier.height(12.dp))
+                                Button(onClick = {
+                                    loading = true
+                                    error = null
+                                    reloadKey++
+                                }) { Text("Try again") }
+                            }
+                            else -> LazyColumn(
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(dramas.filter { it.title.contains(search, ignoreCase = true) }) { drama ->
+                                    DramaCard(
+                                        drama = drama,
+                                        favorite = favorites.contains(drama.url),
+                                        onFavorite = {
+                                            favorites = if (favorites.contains(drama.url)) favorites - drama.url else favorites + drama.url
+                                        },
+                                        onClick = { selectedUrl = drama.url }
+                                    )
+                                }
                             }
                         }
+                    }
+
+                    // Load the public catalog through Android's browser engine, then pass
+                    // only the visible drama-card metadata to the native Compose interface.
+                    key(reloadKey) {
+                        CatalogWebLoader(
+                            modifier = Modifier.size(1.dp),
+                            onResult = { result ->
+                                loading = false
+                                if (result.first.isNotEmpty()) {
+                                    dramas = result.first
+                                    error = null
+                                } else {
+                                    error = result.second ?: "ReelFren did not provide readable drama listings. Please try again later."
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -190,9 +195,112 @@ private fun DramaCard(drama: Drama, favorite: Boolean, onFavorite: () -> Unit, o
             Text("Watch", color = Color(0xFF6750A4), fontWeight = FontWeight.Bold)
         }
         IconButton(onClick = onFavorite) {
-            Icon(Icons.Default.FavoriteBorder, contentDescription = "Favorite", tint = if (favorite) Color.Red else Color.Gray)
+            Icon(
+                if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = "Favorite",
+                tint = if (favorite) Color.Red else Color.Gray
+            )
         }
     }
+}
+
+private class CatalogBridge(
+    private val onResult: (List<Drama>, String?) -> Unit
+) {
+    @JavascriptInterface
+    fun onCatalog(json: String) {
+        val parsed = runCatching {
+            val array = JSONArray(json)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val title = item.optString("title").trim()
+                    val url = item.optString("url").trim()
+                    val image = item.optString("image").trim()
+                    val description = item.optString("description").trim()
+                    if (title.length > 2 && url.startsWith("https://reelfren.net/")) {
+                        add(Drama(title, url, image, description))
+                    }
+                }
+            }.distinctBy { it.url }
+        }.getOrElse { emptyList() }
+
+        Handler(Looper.getMainLooper()).post {
+            if (parsed.isNotEmpty()) onResult(parsed, null)
+            else onResult(emptyList(), "The browser opened ReelFren, but no drama cards could be read. The website may have changed its layout.")
+        }
+    }
+
+    @JavascriptInterface
+    fun onFailure(message: String) {
+        Handler(Looper.getMainLooper()).post {
+            onResult(emptyList(), message)
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun CatalogWebLoader(
+    modifier: Modifier = Modifier,
+    onResult: (Pair<List<Drama>, String?>) -> Unit
+) {
+    val latestCallback by rememberUpdatedState(onResult)
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadsImagesAutomatically = true
+                settings.mediaPlaybackRequiresUserGesture = true
+                webChromeClient = WebChromeClient()
+                addJavascriptInterface(CatalogBridge { list, message ->
+                    latestCallback(list to message)
+                }, "DramaPocketBridge")
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedHttpError(
+                        view: WebView,
+                        request: WebResourceRequest,
+                        errorResponse: android.webkit.WebResourceResponse
+                    ) {
+                        if (request.isForMainFrame && errorResponse.statusCode == 403) {
+                            latestCallback(emptyList<Drama>() to "ReelFren returned HTTP 403 in the browser too. The source is refusing this request, so DramaPocket cannot load its catalog right now.")
+                        }
+                    }
+
+                    override fun onPageFinished(view: WebView, url: String) {
+                        super.onPageFinished(view, url)
+                        if (!url.startsWith(CATALOG_URL)) return
+                        val script = """
+                            (function() {
+                              try {
+                                const links = Array.from(document.querySelectorAll('a[href*="/drama/"]'));
+                                const seen = new Set();
+                                const cards = [];
+                                for (const a of links) {
+                                  const href = new URL(a.getAttribute('href'), location.href).href;
+                                  const img = a.querySelector('img');
+                                  const title = (a.getAttribute('title') || (img && img.getAttribute('alt')) || a.innerText || '').trim().replace(/\s+/g, ' ');
+                                  const image = img ? (img.currentSrc || img.src || img.getAttribute('data-src') || '') : '';
+                                  if (href.startsWith('https://reelfren.net/') && title.length > 2 && !seen.has(href)) {
+                                    seen.add(href);
+                                    cards.push({title: title, url: href, image: image, description: ''});
+                                  }
+                                }
+                                window.DramaPocketBridge.onCatalog(JSON.stringify(cards));
+                              } catch (e) {
+                                window.DramaPocketBridge.onFailure('Could not read the ReelFren catalog page: ' + e.message);
+                              }
+                            })();
+                        """.trimIndent()
+                        view.evaluateJavascript(script, null)
+                    }
+                }
+                loadUrl(CATALOG_URL)
+            }
+        }
+    )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
